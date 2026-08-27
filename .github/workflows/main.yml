@@ -49,7 +49,11 @@ jobs:
             echo "$SDKMANAGER"
             echo
             echo "Available cmdline-tools:"
-            find "$ANDROID_HOME/cmdline-tools" -maxdepth 3 -type f -name sdkmanager 2>/dev/null || true
+            find "$ANDROID_HOME/cmdline-tools" \
+              -maxdepth 3 \
+              -type f \
+              -name sdkmanager \
+              2>/dev/null || true
             exit 1
           fi
 
@@ -76,11 +80,12 @@ jobs:
 
           if [ ! -f "yaraniha.png" ]; then
             echo "ERROR: yaraniha.png was not found in repository root."
-            echo "Make sure the file exists at:"
+            echo "Expected file:"
             echo "./yaraniha.png"
             exit 1
           fi
 
+          echo "Custom icon:"
           file yaraniha.png
           ls -lh yaraniha.png
 
@@ -90,15 +95,15 @@ jobs:
           mkdir -p app/src/main/res/drawable
           mkdir -p gradle/wrapper
 
-          # ---------------------------------------------------------
-          # Copy custom PNG icon
-          # ---------------------------------------------------------
+          # =========================================================
+          # Custom app icon
+          # =========================================================
 
           cp yaraniha.png app/src/main/res/drawable/yaraniha.png
 
-          # ---------------------------------------------------------
+          # =========================================================
           # AndroidManifest.xml
-          # ---------------------------------------------------------
+          # =========================================================
 
           cat > app/src/main/AndroidManifest.xml <<'EOF'
           <?xml version="1.0" encoding="utf-8"?>
@@ -112,10 +117,10 @@ jobs:
               <!-- Camera -->
               <uses-permission android:name="android.permission.CAMERA" />
 
-              <!-- Notifications on Android 13+ -->
+              <!-- Notifications -->
               <uses-permission android:name="android.permission.POST_NOTIFICATIONS" />
 
-              <!-- Storage permission is only relevant to old Android versions -->
+              <!-- Old Android storage -->
               <uses-permission
                   android:name="android.permission.WRITE_EXTERNAL_STORAGE"
                   android:maxSdkVersion="28" />
@@ -147,9 +152,9 @@ jobs:
           </manifest>
           EOF
 
-          # ---------------------------------------------------------
+          # =========================================================
           # MainActivity.kt
-          # ---------------------------------------------------------
+          # =========================================================
 
           cat > app/src/main/java/com/mohammadkhxm/browser/MainActivity.kt <<'EOF'
           package com.mohammadkhxm.browser
@@ -186,7 +191,8 @@ jobs:
               private var filePathCallback: ValueCallback<Array<Uri>>? = null
 
               companion object {
-                  private const val WEBSITE_URL = "https://app.yaranamooz.ir"
+                  private const val WEBSITE_URL =
+                      "https://app.yaranamooz.ir"
 
                   private const val FILE_CHOOSER_REQUEST_CODE = 1001
                   private const val PERMISSION_REQUEST_CODE = 2001
@@ -215,7 +221,7 @@ jobs:
                   // JavaScript
                   settings.javaScriptEnabled = true
 
-                  // Local storage
+                  // Storage
                   settings.domStorageEnabled = true
                   settings.databaseEnabled = true
 
@@ -227,7 +233,7 @@ jobs:
                   // Cache
                   settings.cacheMode = WebSettings.LOAD_DEFAULT
 
-                  // Allow mixed content where needed
+                  // Mixed content compatibility
                   settings.mixedContentMode =
                       WebSettings.MIXED_CONTENT_COMPATIBILITY_MODE
 
@@ -237,7 +243,10 @@ jobs:
                       null
                   )
 
-                  // Keep navigation inside app
+                  // =================================================
+                  // WebView navigation
+                  // =================================================
+
                   webView.webViewClient = object : WebViewClient() {
 
                       override fun shouldOverrideUrlLoading(
@@ -250,11 +259,15 @@ jobs:
                           }
 
                           view?.loadUrl(url)
+
                           return true
                       }
                   }
 
-                  // JavaScript dialogs / fullscreen / file chooser
+                  // =================================================
+                  // File chooser / JavaScript
+                  // =================================================
+
                   webView.webChromeClient = object : WebChromeClient() {
 
                       override fun onShowFileChooser(
@@ -263,25 +276,40 @@ jobs:
                           fileChooserParams: FileChooserParams?
                       ): Boolean {
 
-                          // Cancel any previous pending callback
-                          this@MainActivity.filePathCallback?.onReceiveValue(null)
+                          // Cancel previous request
+                          this@MainActivity
+                              .filePathCallback
+                              ?.onReceiveValue(null)
 
-                          this@MainActivity.filePathCallback = filePath
+                          this@MainActivity.filePathCallback =
+                              filePath
 
                           val intent = try {
+
                               fileChooserParams?.createIntent()
-                                  ?: Intent(Intent.ACTION_OPEN_DOCUMENT).apply {
-                                      addCategory(Intent.CATEGORY_OPENABLE)
+                                  ?: Intent(
+                                      Intent.ACTION_OPEN_DOCUMENT
+                                  ).apply {
+                                      addCategory(
+                                          Intent.CATEGORY_OPENABLE
+                                      )
                                       type = "*/*"
                                   }
+
                           } catch (e: Exception) {
-                              Intent(Intent.ACTION_OPEN_DOCUMENT).apply {
-                                  addCategory(Intent.CATEGORY_OPENABLE)
+
+                              Intent(
+                                  Intent.ACTION_OPEN_DOCUMENT
+                              ).apply {
+                                  addCategory(
+                                      Intent.CATEGORY_OPENABLE
+                                  )
                                   type = "*/*"
                               }
                           }
 
                           return try {
+
                               startActivityForResult(
                                   Intent.createChooser(
                                       intent,
@@ -294,7 +322,8 @@ jobs:
 
                           } catch (e: Exception) {
 
-                              this@MainActivity.filePathCallback = null
+                              this@MainActivity
+                                  .filePathCallback = null
 
                               Toast.makeText(
                                   this@MainActivity,
@@ -307,28 +336,37 @@ jobs:
                       }
                   }
 
-                  // -------------------------------------------------
+                  // =================================================
                   // Download support
-                  // -------------------------------------------------
+                  // =================================================
 
                   webView.setDownloadListener(
-                      DownloadListener { url, userAgent, contentDisposition, mimeType, _ ->
+                      DownloadListener {
+                          url,
+                          userAgent,
+                          contentDisposition,
+                          mimeType,
+                          _ ->
 
                           try {
 
                               val uri = Uri.parse(url)
 
-                              val cookieManager = CookieManager.getInstance()
+                              val cookieManager =
+                                  CookieManager.getInstance()
 
-                              val cookies = cookieManager.getCookie(url)
+                              val cookies =
+                                  cookieManager.getCookie(url)
 
-                              val fileName = URLUtil.guessFileName(
-                                  url,
-                                  contentDisposition,
-                                  mimeType
-                              )
+                              val fileName =
+                                  URLUtil.guessFileName(
+                                      url,
+                                      contentDisposition,
+                                      mimeType
+                                  )
 
-                              val request = DownloadManager.Request(uri)
+                              val request =
+                                  DownloadManager.Request(uri)
 
                               request.setTitle(fileName)
 
@@ -336,16 +374,20 @@ jobs:
                                   "در حال دانلود فایل..."
                               )
 
-                              request.setMimeType(mimeType)
+                              if (!mimeType.isNullOrBlank()) {
+                                  request.setMimeType(mimeType)
+                              }
 
                               request.setNotificationVisibility(
-                                  DownloadManager.Request.VISIBILITY_VISIBLE_NOTIFY_COMPLETED
+                                  DownloadManager
+                                      .Request
+                                      .VISIBILITY_VISIBLE_NOTIFY_COMPLETED
                               )
 
                               request.setAllowedOverMetered(true)
-
                               request.setAllowedOverRoaming(true)
 
+                              // WebView User-Agent
                               if (!userAgent.isNullOrBlank()) {
                                   request.addRequestHeader(
                                       "User-Agent",
@@ -353,6 +395,7 @@ jobs:
                                   )
                               }
 
+                              // WebView cookies
                               if (!cookies.isNullOrBlank()) {
                                   request.addRequestHeader(
                                       "Cookie",
@@ -360,12 +403,13 @@ jobs:
                                   )
                               }
 
+                              // Referer
                               request.addRequestHeader(
                                   "Referer",
                                   WEBSITE_URL
                               )
 
-                              // Save to public Downloads folder
+                              // Downloads folder
                               request.setDestinationInExternalPublicDir(
                                   Environment.DIRECTORY_DOWNLOADS,
                                   fileName
@@ -380,7 +424,7 @@ jobs:
 
                               Toast.makeText(
                                   this,
-                                  "دانلود شروع شد: $fileName",
+                                  "دانلود شروع شد:\n$fileName",
                                   Toast.LENGTH_LONG
                               ).show()
 
@@ -396,44 +440,55 @@ jobs:
                   )
               }
 
-              // -----------------------------------------------------
-              // Initial permissions
-              // -----------------------------------------------------
+              // =====================================================
+              // Request permissions on first launch
+              // =====================================================
 
               private fun requestInitialPermissions() {
 
-                  val permissions = mutableListOf<String>()
+                  val permissions =
+                      mutableListOf<String>()
 
-                  // Camera permission
+                  // Camera
                   if (
-                      Build.VERSION.SDK_INT >= Build.VERSION_CODES.M &&
+                      Build.VERSION.SDK_INT >=
+                      Build.VERSION_CODES.M &&
                       ContextCompat.checkSelfPermission(
                           this,
                           Manifest.permission.CAMERA
                       ) != PackageManager.PERMISSION_GRANTED
                   ) {
-                      permissions.add(Manifest.permission.CAMERA)
+
+                      permissions.add(
+                          Manifest.permission.CAMERA
+                      )
                   }
 
-                  // Android 13+ notification permission
+                  // Notifications Android 13+
                   if (
-                      Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU &&
+                      Build.VERSION.SDK_INT >=
+                      Build.VERSION_CODES.TIRAMISU &&
                       ContextCompat.checkSelfPermission(
                           this,
                           Manifest.permission.POST_NOTIFICATIONS
                       ) != PackageManager.PERMISSION_GRANTED
                   ) {
-                      permissions.add(Manifest.permission.POST_NOTIFICATIONS)
+
+                      permissions.add(
+                          Manifest.permission.POST_NOTIFICATIONS
+                      )
                   }
 
-                  // Android 9 and lower
+                  // Storage Android 9 and older
                   if (
-                      Build.VERSION.SDK_INT <= Build.VERSION_CODES.P &&
+                      Build.VERSION.SDK_INT <=
+                      Build.VERSION_CODES.P &&
                       ContextCompat.checkSelfPermission(
                           this,
                           Manifest.permission.WRITE_EXTERNAL_STORAGE
                       ) != PackageManager.PERMISSION_GRANTED
                   ) {
+
                       permissions.add(
                           Manifest.permission.WRITE_EXTERNAL_STORAGE
                       )
@@ -449,9 +504,9 @@ jobs:
                   }
               }
 
-              // -----------------------------------------------------
+              // =====================================================
               // File chooser result
-              // -----------------------------------------------------
+              // =====================================================
 
               @Deprecated("Deprecated in Android API")
               override fun onActivityResult(
@@ -466,11 +521,15 @@ jobs:
                       data
                   )
 
-                  if (requestCode != FILE_CHOOSER_REQUEST_CODE) {
+                  if (
+                      requestCode !=
+                      FILE_CHOOSER_REQUEST_CODE
+                  ) {
                       return
                   }
 
-                  val callback = filePathCallback
+                  val callback =
+                      filePathCallback
 
                   filePathCallback = null
 
@@ -479,37 +538,50 @@ jobs:
                   }
 
                   if (resultCode != Activity.RESULT_OK) {
+
                       callback.onReceiveValue(null)
+
                       return
                   }
 
-                  val results: Array<Uri>? = when {
+                  val results: Array<Uri>? =
+                      when {
 
-                      data?.clipData != null -> {
+                          // Multiple files
+                          data?.clipData != null -> {
 
-                          val clipData = data.clipData!!
+                              val clipData =
+                                  data.clipData!!
 
-                          Array(clipData.itemCount) { index ->
-                              clipData.getItemAt(index).uri
+                              Array(
+                                  clipData.itemCount
+                              ) { index ->
+
+                                  clipData
+                                      .getItemAt(index)
+                                      .uri
+                              }
+                          }
+
+                          // One file
+                          data?.data != null -> {
+
+                              arrayOf(
+                                  data.data!!
+                              )
+                          }
+
+                          else -> {
+                              null
                           }
                       }
-
-                      data?.data != null -> {
-
-                          arrayOf(data.data!!)
-                      }
-
-                      else -> {
-                          null
-                      }
-                  }
 
                   callback.onReceiveValue(results)
               }
 
-              // -----------------------------------------------------
+              // =====================================================
               // Back button
-              // -----------------------------------------------------
+              // =====================================================
 
               override fun onKeyDown(
                   keyCode: Int,
@@ -517,7 +589,8 @@ jobs:
               ): Boolean {
 
                   if (
-                      keyCode == KeyEvent.KEYCODE_BACK &&
+                      keyCode ==
+                      KeyEvent.KEYCODE_BACK &&
                       ::webView.isInitialized &&
                       webView.canGoBack()
                   ) {
@@ -533,9 +606,9 @@ jobs:
                   )
               }
 
-              // -----------------------------------------------------
+              // =====================================================
               // Cleanup
-              // -----------------------------------------------------
+              // =====================================================
 
               override fun onDestroy() {
 
@@ -544,12 +617,16 @@ jobs:
                       webView.stopLoading()
 
                       webView.webChromeClient = null
-                      webView.webViewClient = null
+
+                      // IMPORTANT:
+                      // Do NOT set webViewClient = null.
+                      // Kotlin WebViewClient property is non-null.
 
                       webView.destroy()
                   }
 
-                  filePathCallback?.onReceiveValue(null)
+                  filePathCallback
+                      ?.onReceiveValue(null)
 
                   filePathCallback = null
 
@@ -558,9 +635,9 @@ jobs:
           }
           EOF
 
-          # ---------------------------------------------------------
+          # =========================================================
           # Layout
-          # ---------------------------------------------------------
+          # =========================================================
 
           cat > app/src/main/res/layout/activity_main.xml <<'EOF'
           <?xml version="1.0" encoding="utf-8"?>
@@ -578,9 +655,9 @@ jobs:
           </FrameLayout>
           EOF
 
-          # ---------------------------------------------------------
+          # =========================================================
           # Theme
-          # ---------------------------------------------------------
+          # =========================================================
 
           cat > app/src/main/res/values/styles.xml <<'EOF'
           <?xml version="1.0" encoding="utf-8"?>
@@ -601,9 +678,9 @@ jobs:
           </resources>
           EOF
 
-          # ---------------------------------------------------------
+          # =========================================================
           # Root build.gradle
-          # ---------------------------------------------------------
+          # =========================================================
 
           cat > build.gradle <<'EOF'
           plugins {
@@ -612,9 +689,9 @@ jobs:
           }
           EOF
 
-          # ---------------------------------------------------------
+          # =========================================================
           # App build.gradle
-          # ---------------------------------------------------------
+          # =========================================================
 
           cat > app/build.gradle <<'EOF'
           plugins {
@@ -671,17 +748,17 @@ jobs:
           }
           EOF
 
-          # ---------------------------------------------------------
+          # =========================================================
           # ProGuard
-          # ---------------------------------------------------------
+          # =========================================================
 
           cat > app/proguard-rules.pro <<'EOF'
           # Project-specific ProGuard/R8 rules.
           EOF
 
-          # ---------------------------------------------------------
+          # =========================================================
           # settings.gradle
-          # ---------------------------------------------------------
+          # =========================================================
 
           cat > settings.gradle <<'EOF'
           pluginManagement {
@@ -710,9 +787,9 @@ jobs:
           include ':app'
           EOF
 
-          # ---------------------------------------------------------
+          # =========================================================
           # gradle.properties
-          # ---------------------------------------------------------
+          # =========================================================
 
           cat > gradle.properties <<'EOF'
           org.gradle.jvmargs=-Xmx2048m -Dfile.encoding=UTF-8
@@ -720,9 +797,9 @@ jobs:
           android.nonTransitiveRClass=true
           EOF
 
-          # ---------------------------------------------------------
+          # =========================================================
           # Gradle wrapper
-          # ---------------------------------------------------------
+          # =========================================================
 
           cat > gradle/wrapper/gradle-wrapper.properties <<'EOF'
           distributionBase=GRADLE_USER_HOME
