@@ -143,10 +143,11 @@ jobs:
           </paths>
           EOF
 
-          # ✅ MainActivity با پشتیبانی کامل از File Chooser
+          # ✅ MainActivity با پشتیبانی کامل از File Chooser - کد اصلاح شده
           cat > app/src/main/java/com/mohammadkhxm/browser/MainActivity.kt <<'EOF'
           package com.mohammadkhxm.browser
 
+          import android.Manifest
           import android.annotation.SuppressLint
           import android.app.Activity
           import android.content.Intent
@@ -154,36 +155,25 @@ jobs:
           import android.net.Uri
           import android.os.Build
           import android.os.Bundle
-          import android.os.Environment
-          import android.provider.MediaStore
           import android.webkit.ValueCallback
           import android.webkit.WebChromeClient
           import android.webkit.WebSettings
           import android.webkit.WebView
           import android.webkit.WebViewClient
-          import android.Manifest
           import android.widget.Toast
           import androidx.appcompat.app.AppCompatActivity
           import androidx.core.app.ActivityCompat
           import androidx.core.content.ContextCompat
-          import androidx.core.content.FileProvider
-          import java.io.File
-          import java.io.IOException
-          import java.text.SimpleDateFormat
-          import java.util.Date
-          import java.util.Locale
 
           class MainActivity : AppCompatActivity() {
 
               private lateinit var webView: WebView
               private var fileUploadCallback: ValueCallback<Array<Uri>>? = null
               private var fileUploadCallbackSingle: ValueCallback<Uri>? = null
-              private var cameraPhotoPath: String? = null
-              
+
               companion object {
                   private const val WEBSITE_URL = "https://app.yaranamooz.ir"
                   private const val FILE_CHOOSER_REQUEST_CODE = 1001
-                  private const val CAMERA_REQUEST_CODE = 1002
                   private const val PERMISSION_REQUEST_CODE = 1003
               }
 
@@ -205,7 +195,7 @@ jobs:
                   settings.loadWithOverviewMode = true
 
                   settings.cacheMode = WebSettings.LOAD_DEFAULT
-                  
+
                   // فعال‌سازی انتخاب فایل
                   settings.allowFileAccess = true
                   settings.allowContentAccess = true
@@ -218,7 +208,7 @@ jobs:
                   webView.webViewClient = WebViewClient()
 
                   webView.webChromeClient = object : WebChromeClient() {
-                      
+
                       // برای Android 5.0+
                       override fun onShowFileChooser(
                           webView: WebView?,
@@ -228,7 +218,7 @@ jobs:
                           fileUploadCallback = filePathCallback
                           return showFileChooser()
                       }
-                      
+
                       // برای Android 4.1 - 4.3
                       @Suppress("DEPRECATION")
                       override fun openFileChooser(
@@ -239,7 +229,7 @@ jobs:
                           fileUploadCallbackSingle = uploadMsg
                           showFileChooser()
                       }
-                      
+
                       // برای Android 4.4
                       @Suppress("DEPRECATION")
                       override fun openFileChooser(uploadMsg: ValueCallback<Uri>?) {
@@ -283,19 +273,19 @@ jobs:
                   val intent = Intent(Intent.ACTION_GET_CONTENT)
                   intent.addCategory(Intent.CATEGORY_OPENABLE)
                   intent.type = "*/*"
-                  
+
                   val intentChooser = Intent(Intent.ACTION_CHOOSER)
                   intentChooser.putExtra(Intent.EXTRA_INTENT, intent)
                   intentChooser.putExtra(
                       Intent.EXTRA_TITLE,
                       "انتخاب فایل"
                   )
-                  
+
                   startActivityForResult(
                       intentChooser,
                       FILE_CHOOSER_REQUEST_CODE
                   )
-                  
+
                   return true
               }
 
@@ -333,36 +323,36 @@ jobs:
                           }
                       }
                   }
+              }
 
-                  override fun onRequestPermissionsResult(
-                      requestCode: Int,
-                      permissions: Array<out String>,
-                      grantResults: IntArray
-                  ) {
-                      super.onRequestPermissionsResult(requestCode, permissions, grantResults)
-                      
-                      if (requestCode == PERMISSION_REQUEST_CODE) {
-                          if (grantResults.all { it == PackageManager.PERMISSION_GRANTED }) {
-                              showFileChooser()
-                          } else {
-                              Toast.makeText(
-                                  this,
-                                  "برای انتخاب فایل به مجوز نیاز است",
-                                  Toast.LENGTH_LONG
-                              ).show()
-                          }
+              override fun onRequestPermissionsResult(
+                  requestCode: Int,
+                  permissions: Array<out String>,
+                  grantResults: IntArray
+              ) {
+                  super.onRequestPermissionsResult(requestCode, permissions, grantResults)
+
+                  if (requestCode == PERMISSION_REQUEST_CODE) {
+                      if (grantResults.all { it == PackageManager.PERMISSION_GRANTED }) {
+                          showFileChooser()
+                      } else {
+                          Toast.makeText(
+                              this,
+                              "برای انتخاب فایل به مجوز نیاز است",
+                              Toast.LENGTH_LONG
+                          ).show()
                       }
-                  }
-
-                  override fun onDestroy() {
-                      if (::webView.isInitialized) {
-                          webView.stopLoading()
-                          webView.destroy()
-                      }
-
-                      super.onDestroy()
                   }
               }
+
+              override fun onDestroy() {
+                  if (::webView.isInitialized) {
+                      webView.stopLoading()
+                      webView.destroy()
+                  }
+                  super.onDestroy()
+              }
+          }
           EOF
 
           cat > app/src/main/res/layout/activity_main.xml <<'EOF'
