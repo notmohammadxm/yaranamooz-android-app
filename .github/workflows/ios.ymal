@@ -1,4 +1,4 @@
-name: Build iOS Simulator (Works 100%)
+name: Build Unsigned iOS IPA (No Auth Required)
 
 on:
   push:
@@ -10,7 +10,7 @@ permissions:
 
 jobs:
   build:
-    name: Build iOS Simulator App
+    name: Build Unsigned IPA
     runs-on: macos-14
 
     steps:
@@ -18,35 +18,50 @@ jobs:
         uses: actions/checkout@v4
 
       - name: Set up Xcode
-        run: sudo xcode-select -s /Applications/Xcode_15.0.app
-
-      - name: Build for Simulator
         run: |
-          # فرض بر این است که پوشه ios و فایل پروژه از قبل وجود دارد
-          xcodebuild \
+          sudo xcode-select -s /Applications/Xcode_15.0.app
+
+      - name: Build Archive (Without Code Signing)
+        run: |
+          # فرض بر این است که پروژه Xcode در پوشه ios قرار دارد
+          # اگر فایل پروژه شما نام یا مسیر متفاوتی دارد، آن را اصلاح کنید
+          xcodebuild archive \
             -project ios/YaranAmooz.xcodeproj \
             -scheme YaranAmooz \
-            -configuration Debug \
-            -sdk iphonesimulator \
-            -derivedDataPath build \
+            -sdk iphoneos \
+            -archivePath build/YaranAmooz.xcarchive \
+            CODE_SIGNING_ALLOWED=NO \
             CODE_SIGNING_REQUIRED=NO \
             CODE_SIGN_IDENTITY="" \
-            build
+            GCC_TREAT_WARNINGS_AS_ERRORS=NO
 
-      - name: Find and Zip .app bundle
+      - name: Manually Package IPA
         run: |
-          APP_PATH=$(find build -name "YaranAmooz.app" -type d | head -n 1)
-          if [ -n "$APP_PATH" ]; then
-            cd $(dirname "$APP_PATH")
-            zip -r ../../../YaranAmooz-Simulator.zip YaranAmooz.app
+          # ساختار فایل IPA فقط یک پوشه Payload است که شامل فایل .app می‌شود
+          mkdir -p build/Payload
+          
+          # کپی کردن فایل اپلیکیشن از داخل آرشیو به پوشه Payload
+          cp -R build/YaranAmooz.xcarchive/Products/Applications/YaranAmooz.app build/Payload/
+          
+          # فشرده‌سازی به فرمت IPA
+          cd build
+          zip -r YaranAmooz-Unsigned.ipa Payload/
+          
+          echo "✅ فایل IPA با موفقیت ساخته شد."
+
+      - name: Verify IPA
+        run: |
+          if [ -f "build/YaranAmooz-Unsigned.ipa" ]; then
+            echo "✅ فایل IPA وجود دارد:"
+            ls -lh build/YaranAmooz-Unsigned.ipa
           else
-            echo "App bundle not found!"
+            echo "❌ فایل IPA ساخته نشد!"
             exit 1
           fi
 
-      - name: Upload Simulator App
+      - name: Upload Unsigned IPA
         uses: actions/upload-artifact@v4
         with:
-          name: yaran-amooz-simulator
-          path: YaranAmooz-Simulator.zip
+          name: yaran-amooz-unsigned-ipa
+          path: build/YaranAmooz-Unsigned.ipa
           retention-days: 30
