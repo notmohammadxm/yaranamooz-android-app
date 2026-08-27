@@ -1,0 +1,327 @@
+name: Build Yaraniha Android APK
+
+on:
+  push:
+    branches: ["main", "master"]
+  workflow_dispatch:
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+
+    steps:
+      # 1. دریافت کد از ریپازیتوری
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      # 2. نصب JDK 17
+      - name: Set up JDK 17
+        uses: actions/setup-java@v4
+        with:
+          java-version: "17"
+          distribution: "temurin"
+
+      # 3. نصب Android SDK
+      - name: Install Android SDK
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y wget unzip
+
+          mkdir -p "$ANDROID_HOME/cmdline-tools"
+
+          wget -q https://dl.google.com/android/repository/commandlinetools-linux-13114758_latest.zip \
+            -O commandlinetools.zip
+
+          unzip -q commandlinetools.zip -d "$ANDROID_HOME/cmdline-tools"
+
+          mv "$ANDROID_HOME/cmdline-tools/cmdline-tools" \
+             "$ANDROID_HOME/cmdline-tools/latest"
+
+          echo "$ANDROID_HOME/cmdline-tools/latest/bin" >> "$GITHUB_PATH"
+          echo "$ANDROID_HOME/platform-tools" >> "$GITHUB_PATH"
+
+          yes | sdkmanager --licenses || true
+
+          sdkmanager \
+            "platform-tools" \
+            "platforms;android-34" \
+            "build-tools;34.0.0"
+
+      # 4. ساخت پروژه Android
+      - name: Create Android Project
+        run: |
+          mkdir -p app/src/main/java/com/mohammadkhxm
+          mkdir -p app/src/main/res/layout
+          mkdir -p app/src/main/res/values
+
+          # AndroidManifest.xml
+          cat > app/src/main/AndroidManifest.xml <<'EOF'
+          <?xml version="1.0" encoding="utf-8"?>
+          <manifest xmlns:android="http://schemas.android.com/apk/res/android">
+
+              <uses-permission android:name="android.permission.INTERNET" />
+              <uses-permission android:name="android.permission.ACCESS_NETWORK_STATE" />
+
+              <application
+                  android:allowBackup="true"
+                  android:label="Yaraniha"
+                  android:theme="@style/AppTheme"
+                  android:hardwareAccelerated="true"
+                  android:usesCleartextTraffic="false">
+
+                  <activity
+                      android:name=".MainActivity"
+                      android:configChanges="orientation|screenSize"
+                      android:exported="true"
+                      android:hardwareAccelerated="true">
+
+                      <intent-filter>
+                          <action android:name="android.intent.action.MAIN" />
+                          <category android:name="android.intent.category.LAUNCHER" />
+                      </intent-filter>
+
+                  </activity>
+
+              </application>
+
+          </manifest>
+          EOF
+
+          # MainActivity.java
+          cat > app/src/main/java/com/mohammadkhxm/MainActivity.java <<'EOF'
+          package com.mohammadkhxm;
+
+          import android.annotation.SuppressLint;
+          import android.os.Bundle;
+          import android.webkit.WebChromeClient;
+          import android.webkit.WebResourceRequest;
+          import android.webkit.WebSettings;
+          import android.webkit.WebView;
+          import android.webkit.WebViewClient;
+
+          import androidx.appcompat.app.AppCompatActivity;
+
+          public class MainActivity extends AppCompatActivity {
+
+              private WebView webView;
+
+              @SuppressLint("SetJavaScriptEnabled")
+              @Override
+              protected void onCreate(Bundle savedInstanceState) {
+                  super.onCreate(savedInstanceState);
+
+                  setContentView(R.layout.activity_main);
+
+                  webView = findViewById(R.id.webView);
+
+                  WebSettings webSettings = webView.getSettings();
+
+                  webSettings.setJavaScriptEnabled(true);
+                  webSettings.setDomStorageEnabled(true);
+                  webSettings.setDatabaseEnabled(true);
+                  webSettings.setLoadsImagesAutomatically(true);
+                  webSettings.setSupportZoom(false);
+                  webSettings.setBuiltInZoomControls(false);
+                  webSettings.setDisplayZoomControls(false);
+                  webSettings.setJavaScriptCanOpenWindowsAutomatically(true);
+                  webSettings.setMediaPlaybackRequiresUserGesture(false);
+
+                  webView.setLayerType(WebView.LAYER_TYPE_HARDWARE, null);
+
+                  webView.setWebViewClient(new WebViewClient() {
+                      @Override
+                      public boolean shouldOverrideUrlLoading(
+                              WebView view,
+                              WebResourceRequest request) {
+
+                          view.loadUrl(request.getUrl().toString());
+                          return true;
+                      }
+
+                      @Override
+                      public boolean shouldOverrideUrlLoading(
+                              WebView view,
+                              String url) {
+
+                          view.loadUrl(url);
+                          return true;
+                      }
+                  });
+
+                  webView.setWebChromeClient(new WebChromeClient());
+
+                  webView.loadUrl("https://app.yaranamooz.ir/");
+              }
+
+              @Override
+              public void onBackPressed() {
+                  if (webView != null && webView.canGoBack()) {
+                      webView.goBack();
+                  } else {
+                      super.onBackPressed();
+                  }
+              }
+
+              @Override
+              protected void onDestroy() {
+                  if (webView != null) {
+                      webView.destroy();
+                  }
+
+                  super.onDestroy();
+              }
+          }
+          EOF
+
+          # activity_main.xml
+          cat > app/src/main/res/layout/activity_main.xml <<'EOF'
+          <?xml version="1.0" encoding="utf-8"?>
+          <LinearLayout
+              xmlns:android="http://schemas.android.com/apk/res/android"
+              android:layout_width="match_parent"
+              android:layout_height="match_parent"
+              android:orientation="vertical">
+
+              <WebView
+                  android:id="@+id/webView"
+                  android:layout_width="match_parent"
+                  android:layout_height="match_parent" />
+
+          </LinearLayout>
+          EOF
+
+          # styles.xml
+          cat > app/src/main/res/values/styles.xml <<'EOF'
+          <?xml version="1.0" encoding="utf-8"?>
+          <resources>
+
+              <style name="AppTheme" parent="android:style/Theme.Material.Light.NoActionBar">
+                  <item name="android:fontFamily">sans</item>
+                  <item name="android:windowActionModeOverlay">true</item>
+                  <item name="android:colorAccent">#3F51B5</item>
+                  <item name="android:windowNoTitle">true</item>
+                  <item name="android:windowFullscreen">false</item>
+              </style>
+
+          </resources>
+          EOF
+
+          # settings.gradle
+          cat > settings.gradle <<'EOF'
+          pluginManagement {
+              repositories {
+                  google()
+                  mavenCentral()
+                  gradlePluginPortal()
+              }
+          }
+
+          dependencyResolutionManagement {
+              repositoriesMode.set(RepositoriesMode.FAIL_ON_PROJECT_REPOS)
+              repositories {
+                  google()
+                  mavenCentral()
+              }
+          }
+
+          rootProject.name = "Yaraniha"
+          include(":app")
+          EOF
+
+          # build.gradle
+          cat > build.gradle <<'EOF'
+          plugins {
+              id 'com.android.application' version '8.2.2' apply false
+          }
+          EOF
+
+          # app/build.gradle
+          cat > app/build.gradle <<'EOF'
+          plugins {
+              id 'com.android.application'
+          }
+
+          android {
+              namespace 'com.mohammadkhxm'
+              compileSdk 34
+
+              defaultConfig {
+                  applicationId 'com.mohammadkhxm'
+                  minSdk 21
+                  targetSdk 34
+                  versionCode 1
+                  versionName '1.0'
+              }
+
+              buildTypes {
+                  debug {
+                      debuggable true
+                  }
+
+                  release {
+                      minifyEnabled false
+                      shrinkResources false
+                      proguardFiles getDefaultProguardFile(
+                          'proguard-android-optimize.txt'
+                      ), 'proguard-rules.pro'
+                  }
+              }
+          }
+
+          dependencies {
+              implementation 'androidx.appcompat:appcompat:1.6.1'
+              implementation 'androidx.webkit:webkit:1.10.0'
+          }
+          EOF
+
+          # proguard-rules.pro
+          touch app/proguard-rules.pro
+
+          # gradle.properties
+          cat > gradle.properties <<'EOF'
+          org.gradle.jvmargs=-Xmx2048m -Dfile.encoding=UTF-8
+          android.useAndroidX=true
+          android.nonTransitiveRClass=true
+          EOF
+
+      # 5. نصب Gradle Wrapper
+      - name: Setup Gradle Wrapper
+        run: |
+          mkdir -p gradle/wrapper
+
+          cat > gradle/wrapper/gradle-wrapper.properties <<'EOF'
+          distributionBase=GRADLE_USER_HOME
+          distributionPath=wrapper/dists
+          distributionUrl=https\://services.gradle.org/distributions/gradle-8.2-bin.zip
+          zipStoreBase=GRADLE_USER_HOME
+          zipStorePath=wrapper/dists
+          EOF
+
+          wget -q \
+            https://raw.githubusercontent.com/gradle/gradle/v8.2.0/gradle/wrapper/gradle-wrapper.jar \
+            -O gradle/wrapper/gradle-wrapper.jar
+
+          cat > gradlew <<'EOF'
+          #!/bin/sh
+
+          APP_HOME=$(CDPATH= cd -- "$(dirname -- "$0")" && pwd)
+
+          exec java \
+            -cp "$APP_HOME/gradle/wrapper/gradle-wrapper.jar" \
+            org.gradle.wrapper.GradleWrapperMain "$@"
+          EOF
+
+          chmod +x gradlew
+
+      # 6. ساخت APK
+      - name: Build Debug APK
+        run: |
+          ./gradlew assembleDebug --no-daemon
+
+      # 7. آپلود APK
+      - name: Upload APK
+        uses: actions/upload-artifact@v4
+        with:
+          name: Yaraniha-APK
+          path: app/build/outputs/apk/debug/app-debug.apk
+          retention-days: 30
