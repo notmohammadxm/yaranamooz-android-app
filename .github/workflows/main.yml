@@ -2,7 +2,10 @@ name: Build Yaraniha Android APK
 
 on:
   push:
-    branches: ["main", "master"]
+    branches:
+      - main
+      - master
+
   workflow_dispatch:
 
 jobs:
@@ -10,43 +13,30 @@ jobs:
     runs-on: ubuntu-latest
 
     steps:
-      # 1. دریافت کد
+
+      # 1. دریافت سورس
       - name: Checkout repository
         uses: actions/checkout@v4
 
-      # 2. نصب JDK 17
+      # 2. نصب Java 17
       - name: Set up JDK 17
-        uses: actions/setup-java@v4
+        uses: actions/setup-java@v5
         with:
           java-version: "17"
           distribution: "temurin"
 
-      # 3. نصب Android SDK
+      # 3. تنظیم Android SDK موجود روی GitHub Runner
       - name: Setup Android SDK
         run: |
-          export ANDROID_HOME=$HOME/android-sdk
+          echo "ANDROID_HOME=$ANDROID_HOME"
+          echo "ANDROID_SDK_ROOT=$ANDROID_SDK_ROOT"
 
-          mkdir -p "$ANDROID_HOME/cmdline-tools"
-
-          wget -q \
-            https://dl.google.com/android/repository/commandlinetools-linux-11076708_latest.zip \
-            -O cmdline-tools.zip
-
-          unzip -q cmdline-tools.zip -d "$ANDROID_HOME/cmdline-tools"
-
-          mv "$ANDROID_HOME/cmdline-tools/cmdline-tools" \
-             "$ANDROID_HOME/cmdline-tools/latest"
-
-          echo "ANDROID_HOME=$ANDROID_HOME" >> "$GITHUB_ENV"
-          echo "$ANDROID_HOME/cmdline-tools/latest/bin" >> "$GITHUB_PATH"
           echo "$ANDROID_HOME/platform-tools" >> "$GITHUB_PATH"
+          echo "$ANDROID_HOME/cmdline-tools/latest/bin" >> "$GITHUB_PATH"
 
-          yes | sdkmanager \
-            --sdk_root="$ANDROID_HOME" \
-            --licenses || true
+          yes | sdkmanager --licenses > /dev/null || true
 
           sdkmanager \
-            --sdk_root="$ANDROID_HOME" \
             "platform-tools" \
             "platforms;android-34" \
             "build-tools;34.0.0"
@@ -54,16 +44,19 @@ jobs:
       # 4. ساخت پروژه Android
       - name: Create Android Project
         run: |
-          export ANDROID_HOME=$HOME/android-sdk
 
-          # ساخت پوشه‌های پروژه
+          # ساخت پوشه‌ها
           mkdir -p app/src/main/java/com/mohammadkhxm
           mkdir -p app/src/main/res/layout
           mkdir -p app/src/main/res/values
 
+          # ----------------------------------------
           # AndroidManifest.xml
+          # ----------------------------------------
+
           cat > app/src/main/AndroidManifest.xml <<'EOF'
           <?xml version="1.0" encoding="utf-8"?>
+
           <manifest xmlns:android="http://schemas.android.com/apk/res/android">
 
               <uses-permission android:name="android.permission.INTERNET" />
@@ -94,7 +87,10 @@ jobs:
           </manifest>
           EOF
 
+          # ----------------------------------------
           # MainActivity.java
+          # ----------------------------------------
+
           cat > app/src/main/java/com/mohammadkhxm/MainActivity.java <<'EOF'
           package com.mohammadkhxm;
 
@@ -127,24 +123,27 @@ jobs:
                   // JavaScript
                   webSettings.setJavaScriptEnabled(true);
 
-                  // Local storage
+                  // Storage
                   webSettings.setDomStorageEnabled(true);
                   webSettings.setDatabaseEnabled(true);
 
-                  // تصاویر
+                  // Images
                   webSettings.setLoadsImagesAutomatically(true);
 
-                  // نمایش مناسب سایت
+                  // Responsive website
                   webSettings.setUseWideViewPort(true);
                   webSettings.setLoadWithOverviewMode(true);
 
-                  // پخش رسانه
+                  // Media
                   webSettings.setMediaPlaybackRequiresUserGesture(false);
 
                   // Hardware acceleration
-                  webView.setLayerType(WebView.LAYER_TYPE_HARDWARE, null);
+                  webView.setLayerType(
+                      WebView.LAYER_TYPE_HARDWARE,
+                      null
+                  );
 
-                  // باز شدن لینک‌ها داخل خود برنامه
+                  // Keep navigation inside the application
                   webView.setWebViewClient(new WebViewClient() {
 
                       @Override
@@ -152,7 +151,10 @@ jobs:
                               WebView view,
                               WebResourceRequest request) {
 
-                          view.loadUrl(request.getUrl().toString());
+                          view.loadUrl(
+                              request.getUrl().toString()
+                          );
+
                           return true;
                       }
 
@@ -162,30 +164,41 @@ jobs:
                               String url) {
 
                           view.loadUrl(url);
+
                           return true;
                       }
                   });
 
-                  // پشتیبانی از JavaScript dialogs و امکانات WebView
-                  webView.setWebChromeClient(new WebChromeClient());
+                  // JavaScript dialogs and browser features
+                  webView.setWebChromeClient(
+                      new WebChromeClient()
+                  );
 
-                  // سایت Yaraniha
-                  webView.loadUrl("https://app.yaranamooz.ir/");
+                  // Yaraniha website
+                  webView.loadUrl(
+                      "https://app.yaranamooz.ir/"
+                  );
               }
 
-              // دکمه Back
+              // Android Back button
               @Override
-              public boolean onKeyDown(int keyCode, KeyEvent event) {
+              public boolean onKeyDown(
+                      int keyCode,
+                      KeyEvent event) {
 
                   if (keyCode == KeyEvent.KEYCODE_BACK
                           && webView != null
                           && webView.canGoBack()) {
 
                       webView.goBack();
+
                       return true;
                   }
 
-                  return super.onKeyDown(keyCode, event);
+                  return super.onKeyDown(
+                      keyCode,
+                      event
+                  );
               }
 
               @Override
@@ -201,7 +214,10 @@ jobs:
           }
           EOF
 
+          # ----------------------------------------
           # activity_main.xml
+          # ----------------------------------------
+
           cat > app/src/main/res/layout/activity_main.xml <<'EOF'
           <?xml version="1.0" encoding="utf-8"?>
 
@@ -219,7 +235,10 @@ jobs:
           </LinearLayout>
           EOF
 
+          # ----------------------------------------
           # styles.xml
+          # ----------------------------------------
+
           cat > app/src/main/res/values/styles.xml <<'EOF'
           <?xml version="1.0" encoding="utf-8"?>
 
@@ -230,7 +249,6 @@ jobs:
                   parent="android:style/Theme.Material.Light.NoActionBar">
 
                   <item name="android:fontFamily">sans</item>
-                  <item name="android:windowActionModeOverlay">true</item>
                   <item name="android:windowNoTitle">true</item>
 
               </style>
@@ -238,9 +256,13 @@ jobs:
           </resources>
           EOF
 
-          # build.gradle
+          # ----------------------------------------
+          # Root build.gradle
+          # ----------------------------------------
+
           cat > build.gradle <<'EOF'
           buildscript {
+
               repositories {
                   google()
                   mavenCentral()
@@ -252,6 +274,7 @@ jobs:
           }
 
           allprojects {
+
               repositories {
                   google()
                   mavenCentral()
@@ -259,52 +282,75 @@ jobs:
           }
           EOF
 
+          # ----------------------------------------
           # app/build.gradle
+          # ----------------------------------------
+
           cat > app/build.gradle <<'EOF'
           apply plugin: 'com.android.application'
 
           android {
+
               namespace 'com.mohammadkhxm'
+
               compileSdk 34
 
               defaultConfig {
+
                   applicationId 'com.mohammadkhxm'
+
                   minSdk 21
+
                   targetSdk 34
+
                   versionCode 1
+
                   versionName '1.0'
               }
 
               buildTypes {
+
                   debug {
+
                       debuggable true
                   }
 
                   release {
+
                       minifyEnabled false
+
                       shrinkResources false
 
                       proguardFiles getDefaultProguardFile(
                           'proguard-android-optimize.txt'
-                      ), 'proguard-rules.pro'
+                      ),
+                      'proguard-rules.pro'
                   }
               }
 
               compileOptions {
+
                   sourceCompatibility JavaVersion.VERSION_1_8
+
                   targetCompatibility JavaVersion.VERSION_1_8
               }
           }
 
           dependencies {
+
               implementation 'androidx.appcompat:appcompat:1.6.1'
+
               implementation 'androidx.webkit:webkit:1.10.0'
           }
           EOF
 
+          # ----------------------------------------
           # settings.gradle
+          # ----------------------------------------
+
           cat > settings.gradle <<'EOF'
           pluginManagement {
+
               repositories {
                   google()
                   mavenCentral()
@@ -313,7 +359,10 @@ jobs:
           }
 
           dependencyResolutionManagement {
-              repositoriesMode.set(RepositoriesMode.FAIL_ON_PROJECT_REPOS)
+
+              repositoriesMode.set(
+                  RepositoriesMode.FAIL_ON_PROJECT_REPOS
+              )
 
               repositories {
                   google()
@@ -326,19 +375,26 @@ jobs:
           include ':app'
           EOF
 
+          # ----------------------------------------
           # gradle.properties
+          # ----------------------------------------
+
           cat > gradle.properties <<'EOF'
           org.gradle.jvmargs=-Xmx2048m -Dfile.encoding=UTF-8
           android.useAndroidX=true
           android.enableJetifier=true
           EOF
 
-          # proguard
+          # ----------------------------------------
+          # ProGuard
+          # ----------------------------------------
+
           touch app/proguard-rules.pro
 
-      # 5. ساخت Gradle Wrapper
+      # 5. Gradle Wrapper
       - name: Setup Gradle Wrapper
         run: |
+
           mkdir -p gradle/wrapper
 
           cat > gradle/wrapper/gradle-wrapper.properties <<'EOF'
@@ -365,10 +421,10 @@ jobs:
 
           chmod +x gradlew
 
-      # 6. Build APK
+      # 6. ساخت APK
       - name: Build APK
         run: |
-          ./gradlew assembleDebug --no-daemon
+          ./gradlew assembleDebug --no-daemon --stacktrace
 
       # 7. آپلود APK
       - name: Upload APK
