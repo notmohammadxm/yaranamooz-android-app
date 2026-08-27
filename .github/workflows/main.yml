@@ -64,7 +64,7 @@ jobs:
         run: |
           set -euo pipefail
 
-          mkdir -p app/src/main/java/com/example/browser
+          mkdir -p app/src/main/java/com/mohammadkhxm/browser
           mkdir -p app/src/main/res/layout
           mkdir -p app/src/main/res/values
           mkdir -p gradle/wrapper
@@ -104,8 +104,8 @@ jobs:
           EOF
 
           # ✅ استفاده از Kotlin به جای Java
-          cat > app/src/main/java/com/example/browser/MainActivity.kt <<'EOF'
-          package com.example.browser
+          cat > app/src/main/java/com/mohammadkhxm/browser/MainActivity.kt <<'EOF'
+          package com.mohammadkhxm.browser
 
           import android.annotation.SuppressLint
           import android.os.Bundle
@@ -121,7 +121,7 @@ jobs:
               private lateinit var webView: WebView
 
               companion object {
-                  private const val WEBSITE_URL = "https://yoursite.com"
+                  private const val WEBSITE_URL = "https://app.yaranamooz.ir"
               }
 
               @SuppressLint("SetJavaScriptEnabled")
@@ -235,11 +235,11 @@ jobs:
           }
 
           android {
-              namespace 'com.example.browser'
+              namespace 'com.mohammadkhxm.browser'
               compileSdk 34
 
               defaultConfig {
-                  applicationId 'com.example.browser'
+                  applicationId 'com.mohammadkhxm.browser'
                   minSdk 21
                   targetSdk 34
 
