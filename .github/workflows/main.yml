@@ -2,7 +2,7 @@ name: Build Android APK
 
 on:
   push:
-    branches: [ "main", "master" ]
+    branches: ["main", "master"]
   workflow_dispatch:
 
 permissions:
@@ -32,14 +32,18 @@ jobs:
         shell: bash
         run: |
           set -euo pipefail
+
           echo "ANDROID_HOME=$ANDROID_HOME"
           echo "ANDROID_SDK_ROOT=$ANDROID_SDK_ROOT"
+
           if [ ! -d "$ANDROID_HOME" ]; then
             echo "ERROR: Android SDK directory not found:"
             echo "$ANDROID_HOME"
             exit 1
           fi
+
           SDKMANAGER="$ANDROID_HOME/cmdline-tools/latest/bin/sdkmanager"
+
           if [ ! -x "$SDKMANAGER" ]; then
             echo "ERROR: sdkmanager not found:"
             echo "$SDKMANAGER"
@@ -48,13 +52,17 @@ jobs:
             find "$ANDROID_HOME/cmdline-tools" -maxdepth 3 -type f -name sdkmanager 2>/dev/null || true
             exit 1
           fi
+
           echo "$ANDROID_HOME/cmdline-tools/latest/bin" >> "$GITHUB_PATH"
           echo "$ANDROID_HOME/platform-tools" >> "$GITHUB_PATH"
+
           yes | "$SDKMANAGER" --licenses >/dev/null || true
+
           "$SDKMANAGER" \
             "platform-tools" \
             "platforms;android-34" \
             "build-tools;34.0.0"
+
           echo
           echo "Android SDK:"
           "$SDKMANAGER" --list_installed
@@ -67,6 +75,7 @@ jobs:
           mkdir -p app/src/main/java/com/mohammadkhxm/browser
           mkdir -p app/src/main/res/layout
           mkdir -p app/src/main/res/values
+          mkdir -p app/src/main/res/drawable
           mkdir -p gradle/wrapper
 
           cat > app/src/main/AndroidManifest.xml <<'EOF'
@@ -103,13 +112,16 @@ jobs:
           </manifest>
           EOF
 
-          # ✅ استفاده از Kotlin به جای Java
           cat > app/src/main/java/com/mohammadkhxm/browser/MainActivity.kt <<'EOF'
           package com.mohammadkhxm.browser
 
           import android.annotation.SuppressLint
+          import android.app.Activity
+          import android.content.Intent
+          import android.net.Uri
           import android.os.Bundle
           import android.view.KeyEvent
+          import android.webkit.ValueCallback
           import android.webkit.WebChromeClient
           import android.webkit.WebSettings
           import android.webkit.WebView
@@ -120,8 +132,11 @@ jobs:
 
               private lateinit var webView: WebView
 
+              private var filePathCallback: ValueCallback<Array<Uri>>? = null
+
               companion object {
                   private const val WEBSITE_URL = "https://app.yaranamooz.ir"
+                  private const val FILE_CHOOSER_REQUEST_CODE = 1001
               }
 
               @SuppressLint("SetJavaScriptEnabled")
@@ -150,18 +165,101 @@ jobs:
 
                   webView.webViewClient = WebViewClient()
 
-                  webView.webChromeClient = WebChromeClient()
+                  webView.webChromeClient = object : WebChromeClient() {
+
+                      override fun onShowFileChooser(
+                          webView: WebView?,
+                          filePath: ValueCallback<Array<Uri>>?,
+                          fileChooserParams: FileChooserParams?
+                      ): Boolean {
+
+                          this@MainActivity.filePathCallback?.onReceiveValue(null)
+
+                          this@MainActivity.filePathCallback = filePath
+
+                          val intent = Intent(Intent.ACTION_GET_CONTENT).apply {
+                              addCategory(Intent.CATEGORY_OPENABLE)
+                              type = "*/*"
+
+                              putExtra(
+                                  Intent.EXTRA_ALLOW_MULTIPLE,
+                                  fileChooserParams?.mode == FileChooserParams.MODE_OPEN_MULTIPLE
+                              )
+                          }
+
+                          return try {
+                              startActivityForResult(
+                                  Intent.createChooser(intent, "انتخاب فایل"),
+                                  FILE_CHOOSER_REQUEST_CODE
+                              )
+                              true
+                          } catch (e: Exception) {
+                              this@MainActivity.filePathCallback = null
+                              false
+                          }
+                      }
+                  }
 
                   webView.loadUrl(WEBSITE_URL)
               }
 
-              override fun onKeyDown(keyCode: Int, event: KeyEvent?): Boolean {
-                  if (keyCode == KeyEvent.KEYCODE_BACK && ::webView.isInitialized) {
+              @Deprecated("Deprecated in Android API")
+              override fun onActivityResult(
+                  requestCode: Int,
+                  resultCode: Int,
+                  data: Intent?
+              ) {
+                  super.onActivityResult(requestCode, resultCode, data)
 
-                      if (webView.canGoBack()) {
-                          webView.goBack()
-                          return true
+                  if (requestCode != FILE_CHOOSER_REQUEST_CODE) {
+                      return
+                  }
+
+                  val callback = filePathCallback
+                  filePathCallback = null
+
+                  if (callback == null) {
+                      return
+                  }
+
+                  if (resultCode != Activity.RESULT_OK) {
+                      callback.onReceiveValue(null)
+                      return
+                  }
+
+                  val results: Array<Uri>? = when {
+                      data?.clipData != null -> {
+                          val clipData = data.clipData!!
+
+                          Array(clipData.itemCount) { index ->
+                              clipData.getItemAt(index).uri
+                          }
                       }
+
+                      data?.data != null -> {
+                          arrayOf(data.data!!)
+                      }
+
+                      else -> {
+                          null
+                      }
+                  }
+
+                  callback.onReceiveValue(results)
+              }
+
+              override fun onKeyDown(
+                  keyCode: Int,
+                  event: KeyEvent?
+              ): Boolean {
+
+                  if (
+                      keyCode == KeyEvent.KEYCODE_BACK &&
+                      ::webView.isInitialized &&
+                      webView.canGoBack()
+                  ) {
+                      webView.goBack()
+                      return true
                   }
 
                   return super.onKeyDown(keyCode, event)
@@ -173,6 +271,9 @@ jobs:
                       webView.destroy()
                   }
 
+                  filePathCallback?.onReceiveValue(null)
+                  filePathCallback = null
+
                   super.onDestroy()
               }
           }
@@ -180,44 +281,55 @@ jobs:
 
           cat > app/src/main/res/layout/activity_main.xml <<'EOF'
           <?xml version="1.0" encoding="utf-8"?>
+
           <FrameLayout
               xmlns:android="http://schemas.android.com/apk/res/android"
               android:layout_width="match_parent"
               android:layout_height="match_parent">
+
               <WebView
                   android:id="@+id/webView"
                   android:layout_width="match_parent"
                   android:layout_height="match_parent" />
+
           </FrameLayout>
           EOF
 
           cat > app/src/main/res/values/styles.xml <<'EOF'
           <?xml version="1.0" encoding="utf-8"?>
+
           <resources>
+
               <style name="AppTheme" parent="Theme.AppCompat.Light.NoActionBar">
+
                   <item name="android:fontFamily">sans</item>
                   <item name="android:windowActionModeOverlay">true</item>
                   <item name="android:colorAccent">#3F51B5</item>
                   <item name="android:windowNoTitle">true</item>
+
               </style>
+
           </resources>
           EOF
 
-          mkdir -p app/src/main/res/drawable
           cat > app/src/main/res/drawable/ic_launcher.xml <<'EOF'
           <?xml version="1.0" encoding="utf-8"?>
+
           <vector
               xmlns:android="http://schemas.android.com/apk/res/android"
               android:width="108dp"
               android:height="108dp"
               android:viewportWidth="108"
               android:viewportHeight="108">
+
               <path
                   android:fillColor="#3F51B5"
                   android:pathData="M0,0h108v108h-108z" />
+
               <path
                   android:fillColor="#FFFFFF"
                   android:pathData="M30,30h48v48h-48z" />
+
           </vector>
           EOF
 
@@ -277,7 +389,6 @@ jobs:
           dependencies {
               implementation 'androidx.core:core-ktx:1.12.0'
               implementation 'androidx.appcompat:appcompat:1.6.1'
-              implementation 'androidx.webkit:webkit:1.10.0'
           }
           EOF
 
@@ -330,7 +441,9 @@ jobs:
 
           cat > gradlew <<'EOF'
           #!/bin/sh
+
           APP_HOME=$(CDPATH= cd -- "$(dirname -- "$0")" && pwd)
+
           exec java \
             -cp "$APP_HOME/gradle/wrapper/gradle-wrapper.jar" \
             org.gradle.wrapper.GradleWrapperMain \
@@ -341,34 +454,43 @@ jobs:
 
           echo
           echo "Generated project:"
-          find app -maxdepth 6 -type f | sort
+          find app -maxdepth 10 -type f | sort
 
       - name: Build Debug APK
         shell: bash
         run: |
           set -euo pipefail
+
           chmod +x ./gradlew
+
           echo "Java:"
           java -version
+
           echo
           echo "Gradle:"
           ./gradlew --version
+
           echo
           echo "Android SDK:"
           echo "ANDROID_HOME=$ANDROID_HOME"
+
           echo
           echo "Building APK..."
+
           ./gradlew assembleDebug --no-daemon
 
       - name: Verify APK
         shell: bash
         run: |
           set -euo pipefail
+
           APK="app/build/outputs/apk/debug/app-debug.apk"
+
           if [ ! -f "$APK" ]; then
             echo "ERROR: APK was not generated."
             exit 1
           fi
+
           echo "APK successfully generated:"
           ls -lh "$APK"
 
