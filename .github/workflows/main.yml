@@ -10,7 +10,7 @@ jobs:
     runs-on: ubuntu-latest
 
     steps:
-      # 1. دریافت کد از ریپازیتوری
+      # 1. دریافت کد
       - name: Checkout repository
         uses: actions/checkout@v4
 
@@ -22,27 +22,31 @@ jobs:
           distribution: "temurin"
 
       # 3. نصب Android SDK
-      - name: Install Android SDK
+      - name: Setup Android SDK
         run: |
-          sudo apt-get update
-          sudo apt-get install -y wget unzip
+          export ANDROID_HOME=$HOME/android-sdk
 
           mkdir -p "$ANDROID_HOME/cmdline-tools"
 
-          wget -q https://dl.google.com/android/repository/commandlinetools-linux-13114758_latest.zip \
-            -O commandlinetools.zip
+          wget -q \
+            https://dl.google.com/android/repository/commandlinetools-linux-11076708_latest.zip \
+            -O cmdline-tools.zip
 
-          unzip -q commandlinetools.zip -d "$ANDROID_HOME/cmdline-tools"
+          unzip -q cmdline-tools.zip -d "$ANDROID_HOME/cmdline-tools"
 
           mv "$ANDROID_HOME/cmdline-tools/cmdline-tools" \
              "$ANDROID_HOME/cmdline-tools/latest"
 
+          echo "ANDROID_HOME=$ANDROID_HOME" >> "$GITHUB_ENV"
           echo "$ANDROID_HOME/cmdline-tools/latest/bin" >> "$GITHUB_PATH"
           echo "$ANDROID_HOME/platform-tools" >> "$GITHUB_PATH"
 
-          yes | sdkmanager --licenses || true
+          yes | sdkmanager \
+            --sdk_root="$ANDROID_HOME" \
+            --licenses || true
 
           sdkmanager \
+            --sdk_root="$ANDROID_HOME" \
             "platform-tools" \
             "platforms;android-34" \
             "build-tools;34.0.0"
@@ -50,6 +54,9 @@ jobs:
       # 4. ساخت پروژه Android
       - name: Create Android Project
         run: |
+          export ANDROID_HOME=$HOME/android-sdk
+
+          # ساخت پوشه‌های پروژه
           mkdir -p app/src/main/java/com/mohammadkhxm
           mkdir -p app/src/main/res/layout
           mkdir -p app/src/main/res/values
@@ -71,9 +78,9 @@ jobs:
 
                   <activity
                       android:name=".MainActivity"
-                      android:configChanges="orientation|screenSize"
-                      android:exported="true"
-                      android:hardwareAccelerated="true">
+                      android:configChanges="orientation|screenSize|keyboardHidden"
+                      android:hardwareAccelerated="true"
+                      android:exported="true">
 
                       <intent-filter>
                           <action android:name="android.intent.action.MAIN" />
@@ -93,6 +100,7 @@ jobs:
 
           import android.annotation.SuppressLint;
           import android.os.Bundle;
+          import android.view.KeyEvent;
           import android.webkit.WebChromeClient;
           import android.webkit.WebResourceRequest;
           import android.webkit.WebSettings;
@@ -116,19 +124,29 @@ jobs:
 
                   WebSettings webSettings = webView.getSettings();
 
+                  // JavaScript
                   webSettings.setJavaScriptEnabled(true);
+
+                  // Local storage
                   webSettings.setDomStorageEnabled(true);
                   webSettings.setDatabaseEnabled(true);
+
+                  // تصاویر
                   webSettings.setLoadsImagesAutomatically(true);
-                  webSettings.setSupportZoom(false);
-                  webSettings.setBuiltInZoomControls(false);
-                  webSettings.setDisplayZoomControls(false);
-                  webSettings.setJavaScriptCanOpenWindowsAutomatically(true);
+
+                  // نمایش مناسب سایت
+                  webSettings.setUseWideViewPort(true);
+                  webSettings.setLoadWithOverviewMode(true);
+
+                  // پخش رسانه
                   webSettings.setMediaPlaybackRequiresUserGesture(false);
 
+                  // Hardware acceleration
                   webView.setLayerType(WebView.LAYER_TYPE_HARDWARE, null);
 
+                  // باز شدن لینک‌ها داخل خود برنامه
                   webView.setWebViewClient(new WebViewClient() {
+
                       @Override
                       public boolean shouldOverrideUrlLoading(
                               WebView view,
@@ -148,24 +166,34 @@ jobs:
                       }
                   });
 
+                  // پشتیبانی از JavaScript dialogs و امکانات WebView
                   webView.setWebChromeClient(new WebChromeClient());
 
+                  // سایت Yaraniha
                   webView.loadUrl("https://app.yaranamooz.ir/");
               }
 
+              // دکمه Back
               @Override
-              public void onBackPressed() {
-                  if (webView != null && webView.canGoBack()) {
+              public boolean onKeyDown(int keyCode, KeyEvent event) {
+
+                  if (keyCode == KeyEvent.KEYCODE_BACK
+                          && webView != null
+                          && webView.canGoBack()) {
+
                       webView.goBack();
-                  } else {
-                      super.onBackPressed();
+                      return true;
                   }
+
+                  return super.onKeyDown(keyCode, event);
               }
 
               @Override
               protected void onDestroy() {
+
                   if (webView != null) {
                       webView.destroy();
+                      webView = null;
                   }
 
                   super.onDestroy();
@@ -176,6 +204,7 @@ jobs:
           # activity_main.xml
           cat > app/src/main/res/layout/activity_main.xml <<'EOF'
           <?xml version="1.0" encoding="utf-8"?>
+
           <LinearLayout
               xmlns:android="http://schemas.android.com/apk/res/android"
               android:layout_width="match_parent"
@@ -193,53 +222,46 @@ jobs:
           # styles.xml
           cat > app/src/main/res/values/styles.xml <<'EOF'
           <?xml version="1.0" encoding="utf-8"?>
+
           <resources>
 
-              <style name="AppTheme" parent="android:style/Theme.Material.Light.NoActionBar">
+              <style
+                  name="AppTheme"
+                  parent="android:style/Theme.Material.Light.NoActionBar">
+
                   <item name="android:fontFamily">sans</item>
                   <item name="android:windowActionModeOverlay">true</item>
-                  <item name="android:colorAccent">#3F51B5</item>
                   <item name="android:windowNoTitle">true</item>
-                  <item name="android:windowFullscreen">false</item>
+
               </style>
 
           </resources>
           EOF
 
-          # settings.gradle
-          cat > settings.gradle <<'EOF'
-          pluginManagement {
-              repositories {
-                  google()
-                  mavenCentral()
-                  gradlePluginPortal()
-              }
-          }
-
-          dependencyResolutionManagement {
-              repositoriesMode.set(RepositoriesMode.FAIL_ON_PROJECT_REPOS)
-              repositories {
-                  google()
-                  mavenCentral()
-              }
-          }
-
-          rootProject.name = "Yaraniha"
-          include(":app")
-          EOF
-
           # build.gradle
           cat > build.gradle <<'EOF'
-          plugins {
-              id 'com.android.application' version '8.2.2' apply false
+          buildscript {
+              repositories {
+                  google()
+                  mavenCentral()
+          }
+
+              dependencies {
+                  classpath 'com.android.tools.build:gradle:7.4.2'
+              }
+          }
+
+          allprojects {
+              repositories {
+                  google()
+                  mavenCentral()
+              }
           }
           EOF
 
           # app/build.gradle
           cat > app/build.gradle <<'EOF'
-          plugins {
-              id 'com.android.application'
-          }
+          apply plugin: 'com.android.application'
 
           android {
               namespace 'com.mohammadkhxm'
@@ -261,10 +283,16 @@ jobs:
                   release {
                       minifyEnabled false
                       shrinkResources false
+
                       proguardFiles getDefaultProguardFile(
                           'proguard-android-optimize.txt'
                       ), 'proguard-rules.pro'
                   }
+              }
+
+              compileOptions {
+                  sourceCompatibility JavaVersion.VERSION_1_8
+                  targetCompatibility JavaVersion.VERSION_1_8
               }
           }
 
@@ -274,17 +302,41 @@ jobs:
           }
           EOF
 
-          # proguard-rules.pro
-          touch app/proguard-rules.pro
+          # settings.gradle
+          cat > settings.gradle <<'EOF'
+          pluginManagement {
+              repositories {
+                  google()
+                  mavenCentral()
+                  gradlePluginPortal()
+              }
+          }
+
+          dependencyResolutionManagement {
+              repositoriesMode.set(RepositoriesMode.FAIL_ON_PROJECT_REPOS)
+
+              repositories {
+                  google()
+                  mavenCentral()
+              }
+          }
+
+          rootProject.name = "Yaraniha"
+
+          include ':app'
+          EOF
 
           # gradle.properties
           cat > gradle.properties <<'EOF'
           org.gradle.jvmargs=-Xmx2048m -Dfile.encoding=UTF-8
           android.useAndroidX=true
-          android.nonTransitiveRClass=true
+          android.enableJetifier=true
           EOF
 
-      # 5. نصب Gradle Wrapper
+          # proguard
+          touch app/proguard-rules.pro
+
+      # 5. ساخت Gradle Wrapper
       - name: Setup Gradle Wrapper
         run: |
           mkdir -p gradle/wrapper
@@ -292,13 +344,13 @@ jobs:
           cat > gradle/wrapper/gradle-wrapper.properties <<'EOF'
           distributionBase=GRADLE_USER_HOME
           distributionPath=wrapper/dists
-          distributionUrl=https\://services.gradle.org/distributions/gradle-8.2-bin.zip
+          distributionUrl=https\://services.gradle.org/distributions/gradle-8.0-bin.zip
           zipStoreBase=GRADLE_USER_HOME
           zipStorePath=wrapper/dists
           EOF
 
           wget -q \
-            https://raw.githubusercontent.com/gradle/gradle/v8.2.0/gradle/wrapper/gradle-wrapper.jar \
+            https://raw.githubusercontent.com/gradle/gradle/v8.0.0/gradle/wrapper/gradle-wrapper.jar \
             -O gradle/wrapper/gradle-wrapper.jar
 
           cat > gradlew <<'EOF'
@@ -313,8 +365,8 @@ jobs:
 
           chmod +x gradlew
 
-      # 6. ساخت APK
-      - name: Build Debug APK
+      # 6. Build APK
+      - name: Build APK
         run: |
           ./gradlew assembleDebug --no-daemon
 
