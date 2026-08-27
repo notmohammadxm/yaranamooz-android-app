@@ -2,9 +2,7 @@ name: Build Android APK
 
 on:
   push:
-    branches:
-      - main
-      - master
+    branches: [ "main", "master" ]
   workflow_dispatch:
 
 permissions:
@@ -21,42 +19,27 @@ jobs:
       JAVA_VERSION: "17"
 
     steps:
-      # ------------------------------------------------------------
-      # Checkout
-      # ------------------------------------------------------------
       - name: Checkout repository
         uses: actions/checkout@v4
 
-      # ------------------------------------------------------------
-      # Java
-      # ------------------------------------------------------------
       - name: Set up JDK 17
         uses: actions/setup-java@v5
         with:
           distribution: temurin
           java-version: "17"
 
-      # ------------------------------------------------------------
-      # Android SDK
-      # GitHub Ubuntu runner already contains Android SDK.
-      # No manual SDK download is required.
-      # ------------------------------------------------------------
       - name: Set up Android SDK
         shell: bash
         run: |
           set -euo pipefail
-
           echo "ANDROID_HOME=$ANDROID_HOME"
           echo "ANDROID_SDK_ROOT=$ANDROID_SDK_ROOT"
-
           if [ ! -d "$ANDROID_HOME" ]; then
             echo "ERROR: Android SDK directory not found:"
             echo "$ANDROID_HOME"
             exit 1
           fi
-
           SDKMANAGER="$ANDROID_HOME/cmdline-tools/latest/bin/sdkmanager"
-
           if [ ! -x "$SDKMANAGER" ]; then
             echo "ERROR: sdkmanager not found:"
             echo "$SDKMANAGER"
@@ -65,40 +48,27 @@ jobs:
             find "$ANDROID_HOME/cmdline-tools" -maxdepth 3 -type f -name sdkmanager 2>/dev/null || true
             exit 1
           fi
-
           echo "$ANDROID_HOME/cmdline-tools/latest/bin" >> "$GITHUB_PATH"
           echo "$ANDROID_HOME/platform-tools" >> "$GITHUB_PATH"
-
           yes | "$SDKMANAGER" --licenses >/dev/null || true
-
           "$SDKMANAGER" \
             "platform-tools" \
             "platforms;android-34" \
             "build-tools;34.0.0"
-
           echo
           echo "Android SDK:"
           "$SDKMANAGER" --list_installed
 
-      # ------------------------------------------------------------
-      # Generate Android project
-      # ------------------------------------------------------------
       - name: Generate Android project
         shell: bash
         run: |
           set -euo pipefail
 
-          # ----------------------------------------------------------
-          # Directories
-          # ----------------------------------------------------------
           mkdir -p app/src/main/java/com/example/browser
           mkdir -p app/src/main/res/layout
           mkdir -p app/src/main/res/values
           mkdir -p gradle/wrapper
 
-          # ----------------------------------------------------------
-          # AndroidManifest.xml
-          # ----------------------------------------------------------
           cat > app/src/main/AndroidManifest.xml <<'EOF'
           <?xml version="1.0" encoding="utf-8"?>
           <manifest xmlns:android="http://schemas.android.com/apk/res/android">
@@ -133,166 +103,135 @@ jobs:
           </manifest>
           EOF
 
-          # ----------------------------------------------------------
-          # MainActivity.java
-          # ----------------------------------------------------------
-          cat > app/src/main/java/com/example/browser/MainActivity.java <<'EOF'
-          package com.example.browser;
+          # ✅ استفاده از Kotlin به جای Java
+          cat > app/src/main/java/com/example/browser/MainActivity.kt <<'EOF'
+          package com.example.browser
 
-          import android.annotation.SuppressLint;
-          import android.os.Bundle;
-          import android.view.KeyEvent;
-          import android.webkit.WebChromeClient;
-          import android.webkit.WebSettings;
-          import android.webkit.WebView;
-          import android.webkit.WebViewClient;
+          import android.annotation.SuppressLint
+          import android.os.Bundle
+          import android.view.KeyEvent
+          import android.webkit.WebChromeClient
+          import android.webkit.WebSettings
+          import android.webkit.WebView
+          import android.webkit.WebViewClient
+          import androidx.appcompat.app.AppCompatActivity
 
-          import androidx.appcompat.app.AppCompatActivity;
+          class MainActivity : AppCompatActivity() {
 
-          public class MainActivity extends AppCompatActivity {
+              private lateinit var webView: WebView
 
-              private WebView webView;
-
-              private static final String WEBSITE_URL = "https://yoursite.com";
+              companion object {
+                  private const val WEBSITE_URL = "https://yoursite.com"
+              }
 
               @SuppressLint("SetJavaScriptEnabled")
-              @Override
-              protected void onCreate(Bundle savedInstanceState) {
-                  super.onCreate(savedInstanceState);
+              override fun onCreate(savedInstanceState: Bundle?) {
+                  super.onCreate(savedInstanceState)
+                  setContentView(R.layout.activity_main)
 
-                  setContentView(R.layout.activity_main);
+                  webView = findViewById(R.id.webView)
 
-                  webView = findViewById(R.id.webView);
+                  val settings = webView.settings
 
-                  WebSettings settings = webView.getSettings();
+                  settings.javaScriptEnabled = true
+                  settings.domStorageEnabled = true
+                  settings.databaseEnabled = true
 
-                  settings.setJavaScriptEnabled(true);
-                  settings.setDomStorageEnabled(true);
-                  settings.setDatabaseEnabled(true);
+                  settings.loadsImagesAutomatically = true
+                  settings.useWideViewPort = true
+                  settings.loadWithOverviewMode = true
 
-                  settings.setLoadsImagesAutomatically(true);
-                  settings.setUseWideViewPort(true);
-                  settings.setLoadWithOverviewMode(true);
-
-                  settings.setCacheMode(WebSettings.LOAD_DEFAULT);
+                  settings.cacheMode = WebSettings.LOAD_DEFAULT
 
                   webView.setLayerType(
                       WebView.LAYER_TYPE_HARDWARE,
                       null
-                  );
+                  )
 
-                  webView.setWebViewClient(new WebViewClient());
+                  webView.webViewClient = WebViewClient()
 
-                  webView.setWebChromeClient(new WebChromeClient());
+                  webView.webChromeClient = WebChromeClient()
 
-                  webView.loadUrl(WEBSITE_URL);
+                  webView.loadUrl(WEBSITE_URL)
               }
 
-              @Override
-              public boolean onKeyDown(int keyCode, KeyEvent event) {
-                  if (keyCode == KeyEvent.KEYCODE_BACK && webView != null) {
+              override fun onKeyDown(keyCode: Int, event: KeyEvent?): Boolean {
+                  if (keyCode == KeyEvent.KEYCODE_BACK && ::webView.isInitialized) {
 
                       if (webView.canGoBack()) {
-                          webView.goBack();
-                          return true;
+                          webView.goBack()
+                          return true
                       }
                   }
 
-                  return super.onKeyDown(keyCode, event);
+                  return super.onKeyDown(keyCode, event)
               }
 
-              @Override
-              protected void onDestroy() {
-                  if (webView != null) {
-                      webView.stopLoading();
-                      webView.destroy();
-                      webView = null;
+              override fun onDestroy() {
+                  if (::webView.isInitialized) {
+                      webView.stopLoading()
+                      webView.destroy()
                   }
 
-                  super.onDestroy();
+                  super.onDestroy()
               }
           }
           EOF
 
-          # ----------------------------------------------------------
-          # activity_main.xml
-          # ----------------------------------------------------------
           cat > app/src/main/res/layout/activity_main.xml <<'EOF'
           <?xml version="1.0" encoding="utf-8"?>
-
           <FrameLayout
               xmlns:android="http://schemas.android.com/apk/res/android"
               android:layout_width="match_parent"
               android:layout_height="match_parent">
-
               <WebView
                   android:id="@+id/webView"
                   android:layout_width="match_parent"
                   android:layout_height="match_parent" />
-
           </FrameLayout>
           EOF
 
-          # ----------------------------------------------------------
-          # App theme
-          # ----------------------------------------------------------
           cat > app/src/main/res/values/styles.xml <<'EOF'
           <?xml version="1.0" encoding="utf-8"?>
-
           <resources>
-
               <style name="AppTheme" parent="Theme.AppCompat.Light.NoActionBar">
                   <item name="android:fontFamily">sans</item>
                   <item name="android:windowActionModeOverlay">true</item>
                   <item name="android:colorAccent">#3F51B5</item>
                   <item name="android:windowNoTitle">true</item>
               </style>
-
           </resources>
           EOF
 
-          # ----------------------------------------------------------
-          # Simple launcher icon
-          # Avoids missing @mipmap/ic_launcher errors.
-          # ----------------------------------------------------------
           mkdir -p app/src/main/res/drawable
-
           cat > app/src/main/res/drawable/ic_launcher.xml <<'EOF'
           <?xml version="1.0" encoding="utf-8"?>
-
           <vector
               xmlns:android="http://schemas.android.com/apk/res/android"
               android:width="108dp"
               android:height="108dp"
               android:viewportWidth="108"
               android:viewportHeight="108">
-
               <path
                   android:fillColor="#3F51B5"
                   android:pathData="M0,0h108v108h-108z" />
-
               <path
                   android:fillColor="#FFFFFF"
                   android:pathData="M30,30h48v48h-48z" />
-
           </vector>
           EOF
 
-          # ----------------------------------------------------------
-          # Root build.gradle
-          # ----------------------------------------------------------
           cat > build.gradle <<'EOF'
           plugins {
               id 'com.android.application' version '8.5.2' apply false
+              id 'org.jetbrains.kotlin.android' version '1.9.22' apply false
           }
           EOF
 
-          # ----------------------------------------------------------
-          # App build.gradle
-          # ----------------------------------------------------------
           cat > app/build.gradle <<'EOF'
           plugins {
               id 'com.android.application'
+              id 'org.jetbrains.kotlin.android'
           }
 
           android {
@@ -329,24 +268,23 @@ jobs:
                   sourceCompatibility JavaVersion.VERSION_17
                   targetCompatibility JavaVersion.VERSION_17
               }
+
+              kotlinOptions {
+                  jvmTarget = '17'
+              }
           }
 
           dependencies {
-              implementation 'androidx.appcompat:appcompat:1.7.0'
-              implementation 'androidx.webkit:webkit:1.12.1'
+              implementation 'androidx.core:core-ktx:1.12.0'
+              implementation 'androidx.appcompat:appcompat:1.6.1'
+              implementation 'androidx.webkit:webkit:1.10.0'
           }
           EOF
 
-          # ----------------------------------------------------------
-          # ProGuard
-          # ----------------------------------------------------------
           cat > app/proguard-rules.pro <<'EOF'
           # Project-specific ProGuard/R8 rules.
           EOF
 
-          # ----------------------------------------------------------
-          # settings.gradle
-          # ----------------------------------------------------------
           cat > settings.gradle <<'EOF'
           pluginManagement {
               repositories {
@@ -372,18 +310,12 @@ jobs:
           include ':app'
           EOF
 
-          # ----------------------------------------------------------
-          # gradle.properties
-          # ----------------------------------------------------------
           cat > gradle.properties <<'EOF'
           org.gradle.jvmargs=-Xmx2048m -Dfile.encoding=UTF-8
           android.useAndroidX=true
           android.nonTransitiveRClass=true
           EOF
 
-          # ----------------------------------------------------------
-          # Gradle Wrapper
-          # ----------------------------------------------------------
           cat > gradle/wrapper/gradle-wrapper.properties <<'EOF'
           distributionBase=GRADLE_USER_HOME
           distributionPath=wrapper/dists
@@ -392,21 +324,13 @@ jobs:
           zipStorePath=wrapper/dists
           EOF
 
-          # ----------------------------------------------------------
-          # Download official Gradle wrapper JAR
-          # ----------------------------------------------------------
           curl -fsSL \
             "https://raw.githubusercontent.com/gradle/gradle/v8.7.0/gradle/wrapper/gradle-wrapper.jar" \
             -o gradle/wrapper/gradle-wrapper.jar
 
-          # ----------------------------------------------------------
-          # gradlew
-          # ----------------------------------------------------------
           cat > gradlew <<'EOF'
           #!/bin/sh
-
           APP_HOME=$(CDPATH= cd -- "$(dirname -- "$0")" && pwd)
-
           exec java \
             -cp "$APP_HOME/gradle/wrapper/gradle-wrapper.jar" \
             org.gradle.wrapper.GradleWrapperMain \
@@ -415,60 +339,39 @@ jobs:
 
           chmod +x gradlew
 
-          # ----------------------------------------------------------
-          # Verify generated project
-          # ----------------------------------------------------------
           echo
           echo "Generated project:"
           find app -maxdepth 6 -type f | sort
 
-      # ------------------------------------------------------------
-      # Build APK
-      # ------------------------------------------------------------
       - name: Build Debug APK
         shell: bash
         run: |
           set -euo pipefail
-
           chmod +x ./gradlew
-
           echo "Java:"
           java -version
-
           echo
           echo "Gradle:"
           ./gradlew --version
-
           echo
           echo "Android SDK:"
           echo "ANDROID_HOME=$ANDROID_HOME"
-
           echo
           echo "Building APK..."
+          ./gradlew assembleDebug --no-daemon
 
-          ./gradlew assembleDebug --no-daemon --stacktrace
-
-      # ------------------------------------------------------------
-      # Verify APK
-      # ------------------------------------------------------------
       - name: Verify APK
         shell: bash
         run: |
           set -euo pipefail
-
           APK="app/build/outputs/apk/debug/app-debug.apk"
-
           if [ ! -f "$APK" ]; then
             echo "ERROR: APK was not generated."
             exit 1
           fi
-
           echo "APK successfully generated:"
           ls -lh "$APK"
 
-      # ------------------------------------------------------------
-      # Upload APK
-      # ------------------------------------------------------------
       - name: Upload APK
         uses: actions/upload-artifact@v4
         with:
