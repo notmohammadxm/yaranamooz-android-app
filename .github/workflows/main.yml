@@ -858,7 +858,7 @@ jobs:
         run: |
           set -euo pipefail
 
-          APK="app/build/outputs/apk/debug/app-debug.apk"
+          APK="app/build/outputs/apk/debug/Yaraniha.apk"
 
           if [ ! -f "$APK" ]; then
             echo "ERROR: APK was not generated."
