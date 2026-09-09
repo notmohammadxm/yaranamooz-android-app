@@ -129,7 +129,7 @@ jobs:
                   android:allowBackup="true"
                   android:hardwareAccelerated="true"
                   android:icon="@drawable/yaraniha"
-                  android:label="Yaran Amooz"
+                  android:label="Yaraniha"
                   android:supportsRtl="true"
                   android:theme="@style/AppTheme"
                   android:usesCleartextTraffic="true">
@@ -192,7 +192,7 @@ jobs:
 
               companion object {
                   private const val WEBSITE_URL =
-                      "https://app.yaranamooz.ir"
+                      "https://app.yaran.info"
 
                   private const val FILE_CHOOSER_REQUEST_CODE = 1001
                   private const val PERMISSION_REQUEST_CODE = 2001
@@ -782,7 +782,7 @@ jobs:
               }
           }
 
-          rootProject.name = 'YaranAmooz'
+          rootProject.name = 'Yaraniha'
 
           include ':app'
           EOF
@@ -872,7 +872,7 @@ jobs:
       - name: Upload APK
         uses: actions/upload-artifact@v4
         with:
-          name: yaran-amooz-debug-apk
-          path: app/build/outputs/apk/debug/app-debug.apk
+          name: yaraniha-debug-apk
+          path: app/build/outputs/apk/debug/Yaraniha.apk
           if-no-files-found: error
           retention-days: 30
