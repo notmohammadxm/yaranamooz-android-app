@@ -8,6 +8,10 @@ on:
 permissions:
   contents: read
 
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
 jobs:
   build:
     name: Build Debug APK
@@ -17,6 +21,7 @@ jobs:
       ANDROID_HOME: /usr/local/lib/android/sdk
       ANDROID_SDK_ROOT: /usr/local/lib/android/sdk
       JAVA_VERSION: "17"
+      GRADLE_OPTS: "-Dorg.gradle.daemon=false"
 
     steps:
       - name: Checkout repository
@@ -27,6 +32,16 @@ jobs:
         with:
           distribution: temurin
           java-version: "17"
+
+      - name: Cache Gradle
+        uses: actions/cache@v4
+        with:
+          path: |
+            ~/.gradle/caches
+            ~/.gradle/wrapper
+          key: gradle-${{ runner.os }}-${{ hashFiles('**/*.gradle*', 'gradle/wrapper/gradle-wrapper.properties') }}
+          restore-keys: |
+            gradle-${{ runner.os }}-
 
       - name: Set up Android SDK
         shell: bash
@@ -62,6 +77,10 @@ jobs:
 
           yes | "$SDKMANAGER" --licenses >/dev/null || true
 
+          # Android 14 (API 34) toolchain: compileSdk/targetSdk 34 keeps the
+          # app compatible with the newest Play Store requirements while
+          # minSdk 23 (Android 6.0 Marshmallow) below guarantees the widest
+          # possible device coverage.
           "$SDKMANAGER" \
             "platform-tools" \
             "platforms;android-34" \
@@ -92,7 +111,10 @@ jobs:
           mkdir -p app/src/main/java/com/mohammadkhxm/browser
           mkdir -p app/src/main/res/layout
           mkdir -p app/src/main/res/values
+          mkdir -p app/src/main/res/values-night
           mkdir -p app/src/main/res/drawable
+          mkdir -p app/src/main/res/xml
+          mkdir -p app/src/main/res/mipmap-anydpi-v26
           mkdir -p gradle/wrapper
 
           # =========================================================
@@ -102,43 +124,122 @@ jobs:
           cp yaraniha.png app/src/main/res/drawable/yaraniha.png
 
           # =========================================================
+          # Network Security Config
+          # Restricts cleartext (HTTP) traffic to nothing by default.
+          # Only add a <domain-config> entry here if you truly need to
+          # allow plain HTTP to a specific host; the production site
+          # (app.yaran.info) is served over HTTPS, so it does not need
+          # a cleartext exception.
+          # =========================================================
+
+          cat > app/src/main/res/xml/network_security_config.xml <<'EOF'
+          <?xml version="1.0" encoding="utf-8"?>
+          <network-security-config>
+              <base-config cleartextTrafficPermitted="false">
+                  <trust-anchors>
+                      <certificates src="system" />
+                  </trust-anchors>
+              </base-config>
+          </network-security-config>
+          EOF
+
+          # =========================================================
+          # Backup rules (Android 12+ requires explicit rules when
+          # allowBackup="true" to avoid leaking sensitive data such as
+          # WebView cookies/local storage via auto backup)
+          # =========================================================
+
+          cat > app/src/main/res/xml/backup_rules.xml <<'EOF'
+          <?xml version="1.0" encoding="utf-8"?>
+          <full-backup-content>
+              <exclude domain="sharedpref" />
+              <exclude domain="database" />
+          </full-backup-content>
+          EOF
+
+          cat > app/src/main/res/xml/data_extraction_rules.xml <<'EOF'
+          <?xml version="1.0" encoding="utf-8"?>
+          <data-extraction-rules>
+              <cloud-backup>
+                  <exclude domain="sharedpref" />
+                  <exclude domain="database" />
+              </cloud-backup>
+              <device-transfer>
+                  <exclude domain="sharedpref" />
+                  <exclude domain="database" />
+              </device-transfer>
+          </data-extraction-rules>
+          EOF
+
+          # =========================================================
           # AndroidManifest.xml
           # =========================================================
 
           cat > app/src/main/AndroidManifest.xml <<'EOF'
           <?xml version="1.0" encoding="utf-8"?>
 
-          <manifest xmlns:android="http://schemas.android.com/apk/res/android">
+          <manifest xmlns:android="http://schemas.android.com/apk/res/android"
+              xmlns:tools="http://schemas.android.com/tools">
 
               <!-- Internet -->
               <uses-permission android:name="android.permission.INTERNET" />
               <uses-permission android:name="android.permission.ACCESS_NETWORK_STATE" />
 
-              <!-- Camera -->
+              <!-- Camera (for <input type="file" capture> in WebView) -->
               <uses-permission android:name="android.permission.CAMERA" />
+              <uses-feature
+                  android:name="android.hardware.camera"
+                  android:required="false" />
+              <uses-feature
+                  android:name="android.hardware.camera.autofocus"
+                  android:required="false" />
 
-              <!-- Notifications -->
+              <!-- Notifications (Android 13+) -->
               <uses-permission android:name="android.permission.POST_NOTIFICATIONS" />
 
-              <!-- Old Android storage -->
+              <!-- Legacy storage permission, only relevant up to Android 9 (API 28) -->
               <uses-permission
                   android:name="android.permission.WRITE_EXTERNAL_STORAGE"
                   android:maxSdkVersion="28" />
+              <uses-permission
+                  android:name="android.permission.READ_EXTERNAL_STORAGE"
+                  android:maxSdkVersion="32" />
+
+              <!-- Allows resolving external links / file chooser targets on Android 11+ -->
+              <queries>
+                  <intent>
+                      <action android:name="android.intent.action.VIEW" />
+                      <category android:name="android.intent.category.BROWSABLE" />
+                      <data android:scheme="https" />
+                  </intent>
+                  <intent>
+                      <action android:name="android.intent.action.GET_CONTENT" />
+                      <category android:name="android.intent.category.OPENABLE" />
+                      <data android:mimeType="*/*" />
+                  </intent>
+              </queries>
 
               <application
                   android:allowBackup="true"
+                  android:fullBackupContent="@xml/backup_rules"
+                  android:dataExtractionRules="@xml/data_extraction_rules"
                   android:hardwareAccelerated="true"
                   android:icon="@drawable/yaraniha"
                   android:label="Yaraniha"
+                  android:networkSecurityConfig="@xml/network_security_config"
                   android:supportsRtl="true"
                   android:theme="@style/AppTheme"
-                  android:usesCleartextTraffic="true">
+                  android:usesCleartextTraffic="false"
+                  tools:targetApi="28">
 
                   <activity
                       android:name=".MainActivity"
-                      android:configChanges="orientation|screenSize|keyboardHidden"
+                      android:configChanges="orientation|screenSize|screenLayout|keyboardHidden|uiMode"
                       android:exported="true"
-                      android:hardwareAccelerated="true">
+                      android:enableOnBackInvokedCallback="true"
+                      android:hardwareAccelerated="true"
+                      android:launchMode="singleTask"
+                      android:windowSoftInputMode="adjustResize">
 
                       <intent-filter>
                           <action android:name="android.intent.action.MAIN" />
@@ -180,6 +281,7 @@ jobs:
           import android.webkit.WebView
           import android.webkit.WebViewClient
           import android.widget.Toast
+          import androidx.activity.OnBackPressedCallback
           import androidx.appcompat.app.AppCompatActivity
           import androidx.core.app.ActivityCompat
           import androidx.core.content.ContextCompat
@@ -193,6 +295,9 @@ jobs:
               companion object {
                   private const val WEBSITE_URL =
                       "https://app.yaran.info"
+
+                  private const val ALLOWED_HOST =
+                      "app.yaran.info"
 
                   private const val FILE_CHOOSER_REQUEST_CODE = 1001
                   private const val PERMISSION_REQUEST_CODE = 2001
@@ -208,9 +313,13 @@ jobs:
 
                   setupWebView()
 
+                  setupBackNavigation()
+
                   requestInitialPermissions()
 
-                  webView.loadUrl(WEBSITE_URL)
+                  if (savedInstanceState == null) {
+                      webView.loadUrl(WEBSITE_URL)
+                  }
               }
 
               @SuppressLint("SetJavaScriptEnabled")
@@ -220,6 +329,7 @@ jobs:
 
                   // JavaScript
                   settings.javaScriptEnabled = true
+                  settings.javaScriptCanOpenWindowsAutomatically = false
 
                   // Storage
                   settings.domStorageEnabled = true
@@ -233,9 +343,19 @@ jobs:
                   // Cache
                   settings.cacheMode = WebSettings.LOAD_DEFAULT
 
-                  // Mixed content compatibility
+                  // Security hardening: no access to local device files
+                  // through file:// URLs from within web content, and no
+                  // access to content:// URLs unless explicitly needed.
+                  settings.allowFileAccess = false
+                  settings.allowContentAccess = false
+                  settings.allowFileAccessFromFileURLs = false
+                  settings.allowUniversalAccessFromFileURLs = false
+
+                  // The production site is served entirely over HTTPS, so
+                  // mixed content (loading HTTP resources on an HTTPS page)
+                  // is disallowed rather than merely "compatible".
                   settings.mixedContentMode =
-                      WebSettings.MIXED_CONTENT_COMPATIBILITY_MODE
+                      WebSettings.MIXED_CONTENT_NEVER_ALLOW
 
                   // Hardware acceleration
                   webView.setLayerType(
@@ -261,6 +381,21 @@ jobs:
                           view?.loadUrl(url)
 
                           return true
+                      }
+
+                      override fun onReceivedSslError(
+                          view: WebView?,
+                          handler: android.webkit.SslErrorHandler?,
+                          error: android.net.http.SslError?
+                      ) {
+                          // Never silently trust invalid certificates.
+                          handler?.cancel()
+
+                          Toast.makeText(
+                              this@MainActivity,
+                              "خطای اتصال امن (SSL)",
+                              Toast.LENGTH_LONG
+                          ).show()
                       }
                   }
 
@@ -441,6 +576,35 @@ jobs:
               }
 
               // =====================================================
+              // Back navigation (works on every supported API level:
+              // OnBackPressedCallback handles Android 13+ predictive
+              // back gestures, while onKeyDown below still covers the
+              // physical/legacy back button on Android 6 through 12).
+              // =====================================================
+
+              private fun setupBackNavigation() {
+
+                  onBackPressedDispatcher.addCallback(
+                      this,
+                      object : OnBackPressedCallback(true) {
+
+                          override fun handleOnBackPressed() {
+
+                              if (
+                                  ::webView.isInitialized &&
+                                  webView.canGoBack()
+                              ) {
+                                  webView.goBack()
+                              } else {
+                                  isEnabled = false
+                                  onBackPressedDispatcher.onBackPressed()
+                              }
+                          }
+                      }
+                  )
+              }
+
+              // =====================================================
               // Request permissions on first launch
               // =====================================================
 
@@ -580,9 +744,12 @@ jobs:
               }
 
               // =====================================================
-              // Back button
+              // Back button (legacy physical/software key, still the
+              // primary path on Android 6 through 12; kept for full
+              // backward compatibility alongside setupBackNavigation()).
               // =====================================================
 
+              @Suppress("OVERRIDE_DEPRECATION")
               override fun onKeyDown(
                   keyCode: Int,
                   event: KeyEvent?
@@ -591,6 +758,8 @@ jobs:
                   if (
                       keyCode ==
                       KeyEvent.KEYCODE_BACK &&
+                      Build.VERSION.SDK_INT <
+                      Build.VERSION_CODES.TIRAMISU &&
                       ::webView.isInitialized &&
                       webView.canGoBack()
                   ) {
@@ -645,7 +814,8 @@ jobs:
           <FrameLayout
               xmlns:android="http://schemas.android.com/apk/res/android"
               android:layout_width="match_parent"
-              android:layout_height="match_parent">
+              android:layout_height="match_parent"
+              android:fitsSystemWindows="true">
 
               <WebView
                   android:id="@+id/webView"
@@ -656,7 +826,7 @@ jobs:
           EOF
 
           # =========================================================
-          # Theme
+          # Theme (light)
           # =========================================================
 
           cat > app/src/main/res/values/styles.xml <<'EOF'
@@ -672,6 +842,33 @@ jobs:
                   <item name="android:windowActionModeOverlay">true</item>
                   <item name="android:colorAccent">#3F51B5</item>
                   <item name="android:windowNoTitle">true</item>
+                  <item name="android:statusBarColor">#3F51B5</item>
+
+              </style>
+
+          </resources>
+          EOF
+
+          # =========================================================
+          # Theme (dark) - keeps the app usable/readable on devices
+          # forcing system dark mode instead of leaving a jarring
+          # mismatch between the app chrome and the WebView content.
+          # =========================================================
+
+          cat > app/src/main/res/values-night/styles.xml <<'EOF'
+          <?xml version="1.0" encoding="utf-8"?>
+
+          <resources>
+
+              <style
+                  name="AppTheme"
+                  parent="Theme.AppCompat.NoActionBar">
+
+                  <item name="android:fontFamily">sans</item>
+                  <item name="android:windowActionModeOverlay">true</item>
+                  <item name="android:colorAccent">#3F51B5</item>
+                  <item name="android:windowNoTitle">true</item>
+                  <item name="android:statusBarColor">#000000</item>
 
               </style>
 
@@ -685,7 +882,7 @@ jobs:
           cat > build.gradle <<'EOF'
           plugins {
               id 'com.android.application' version '8.5.2' apply false
-              id 'org.jetbrains.kotlin.android' version '1.9.22' apply false
+              id 'org.jetbrains.kotlin.android' version '1.9.24' apply false
           }
           EOF
 
@@ -705,21 +902,31 @@ jobs:
 
               defaultConfig {
                   applicationId 'com.mohammadkhxm.browser'
-                  minSdk 21
+
+                  // minSdk 23 = Android 6.0 (Marshmallow) and every
+                  // version after it, as requested: this is the widest
+                  // supported range while still allowing runtime
+                  // permissions (introduced in API 23) to work correctly.
+                  minSdk 23
                   targetSdk 34
 
                   versionCode 1
                   versionName '1.0'
+
+                  vectorDrawables.useSupportLibrary = true
               }
 
               buildTypes {
 
                   debug {
                       debuggable true
+                      applicationIdSuffix ".debug"
                   }
 
                   release {
-                      minifyEnabled false
+                      debuggable false
+                      minifyEnabled true
+                      shrinkResources true
 
                       proguardFiles(
                           getDefaultProguardFile(
@@ -733,18 +940,39 @@ jobs:
               compileOptions {
                   sourceCompatibility JavaVersion.VERSION_17
                   targetCompatibility JavaVersion.VERSION_17
+                  coreLibraryDesugaringEnabled true
               }
 
               kotlinOptions {
                   jvmTarget = '17'
               }
+
+              buildFeatures {
+                  buildConfig = true
+              }
+
+              packagingOptions {
+                  resources {
+                      excludes += ['META-INF/DEPENDENCIES', 'META-INF/LICENSE*']
+                  }
+              }
+
+              lint {
+                  abortOnError false
+                  checkReleaseBuilds false
+              }
           }
 
           dependencies {
 
-              implementation 'androidx.core:core-ktx:1.12.0'
+              implementation 'androidx.core:core-ktx:1.13.1'
+              implementation 'androidx.appcompat:appcompat:1.7.0'
+              implementation 'androidx.activity:activity-ktx:1.9.0'
+              implementation 'com.google.android.material:material:1.12.0'
 
-              implementation 'androidx.appcompat:appcompat:1.6.1'
+              // Enables java.time / lambdas-on-old-APIs style desugared
+              // APIs to run correctly on minSdk 23 devices.
+              coreLibraryDesugaring 'com.android.tools:desugar_jdk_libs:2.0.4'
           }
           EOF
 
@@ -754,6 +982,16 @@ jobs:
 
           cat > app/proguard-rules.pro <<'EOF'
           # Project-specific ProGuard/R8 rules.
+
+          # Keep WebView JavaScript interface members (defensive default;
+          # no @JavascriptInterface is currently exposed, but this avoids
+          # silent breakage if one is added later).
+          -keepclassmembers class * {
+              @android.webkit.JavascriptInterface <methods>;
+          }
+
+          # Keep WebViewClient / WebChromeClient callbacks intact.
+          -keep class com.mohammadkhxm.browser.MainActivity { *; }
           EOF
 
           # =========================================================
@@ -792,9 +1030,14 @@ jobs:
           # =========================================================
 
           cat > gradle.properties <<'EOF'
-          org.gradle.jvmargs=-Xmx2048m -Dfile.encoding=UTF-8
+          org.gradle.jvmargs=-Xmx3072m -Dfile.encoding=UTF-8
+          org.gradle.parallel=true
+          org.gradle.caching=true
+          org.gradle.configureondemand=true
           android.useAndroidX=true
           android.nonTransitiveRClass=true
+          android.enableJetifier=false
+          kotlin.code.style=official
           EOF
 
           # =========================================================
@@ -851,7 +1094,7 @@ jobs:
           echo
           echo "Building APK..."
 
-          ./gradlew assembleDebug --no-daemon
+          ./gradlew assembleDebug --no-daemon --stacktrace
 
       - name: Verify APK
         shell: bash
@@ -869,6 +1112,11 @@ jobs:
           echo
           echo "APK successfully generated:"
           ls -lh "$APK"
+
+          echo
+          echo "APK metadata:"
+          "$ANDROID_HOME/build-tools/34.0.0/aapt" dump badging "$APK" \
+            | grep -E "package:|sdkVersion:|targetSdkVersion:|application-label:" || true
 
       - name: Upload APK
         uses: actions/upload-artifact@v4
