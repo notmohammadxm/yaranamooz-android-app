@@ -692,7 +692,6 @@ jobs:
                   webView?.let {
                       it.stopLoading()
                       it.webChromeClient = null
-                      it.webViewClient = null
                       it.destroy()
                   }
 
