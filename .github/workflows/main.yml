@@ -965,7 +965,7 @@ jobs:
             echo "VERIFY: $(basename "$apk")"
             echo "=============================================================="
 
-            "$ZIPALIGN" -c -P 16 -v 4 "$apk"
+            "$ZIPALIGN" -c -p -v 4 "$apk"
 
             VERIFY_OUTPUT="$("$APKSIGNER" verify --verbose --print-certs "$apk" 2>&1)"
             printf '%s\n' "$VERIFY_OUTPUT"
