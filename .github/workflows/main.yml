@@ -14,13 +14,14 @@ concurrency:
 
 jobs:
   build:
-    name: Build Multi‑ABI APKs
+    name: Build Multi-ABI APKs
     runs-on: ubuntu-24.04
 
     env:
       ANDROID_HOME: /usr/local/lib/android/sdk
       ANDROID_SDK_ROOT: /usr/local/lib/android/sdk
-      GRADLE_OPTS: "-Dorg.gradle.daemon=false"
+      GRADLE_OPTS: "-Dorg.gradle.daemon=false -Dorg.gradle.caching=true"
+
       KEYSTORE_PASSWORD: ${{ secrets.ANDROID_KEYSTORE_PASSWORD }}
       KEY_ALIAS: ${{ secrets.ANDROID_KEY_ALIAS }}
       KEY_PASSWORD: ${{ secrets.ANDROID_KEY_PASSWORD }}
@@ -34,6 +35,7 @@ jobs:
         with:
           distribution: temurin
           java-version: "17"
+          cache: gradle
 
       - name: Cache Gradle
         uses: actions/cache@v4
@@ -49,28 +51,84 @@ jobs:
         shell: bash
         run: |
           set -euo pipefail
+
           SDKMANAGER="$ANDROID_HOME/cmdline-tools/latest/bin/sdkmanager"
+
           if [ ! -x "$SDKMANAGER" ]; then
             echo "ERROR: sdkmanager not found at $SDKMANAGER"
             exit 1
           fi
+
           echo "$ANDROID_HOME/cmdline-tools/latest/bin" >> "$GITHUB_PATH"
           echo "$ANDROID_HOME/platform-tools" >> "$GITHUB_PATH"
-          yes | "$SDKMANAGER" --licenses >/dev/null 2>&1 || true
-          "$SDKMANAGER" "platform-tools" "platforms;android-34" "build-tools;34.0.0"
 
-      - name: Restore signing keystore from secret
+          yes | "$SDKMANAGER" --licenses >/dev/null 2>&1 || true
+          "$SDKMANAGER" \
+            "platform-tools" \
+            "platforms;android-34" \
+            "build-tools;34.0.0"
+
+      - name: Restore and validate signing keystore
         shell: bash
         env:
           KEYSTORE_BASE64: ${{ secrets.ANDROID_KEYSTORE_BASE64 }}
         run: |
           set -euo pipefail
+
+          KEYSTORE_PATH="$GITHUB_WORKSPACE/yaraniha.keystore"
+
           if [ -z "${KEYSTORE_BASE64:-}" ]; then
             echo "ERROR: ANDROID_KEYSTORE_BASE64 secret is missing."
             exit 1
           fi
-          echo "$KEYSTORE_BASE64" | base64 -d > "$GITHUB_WORKSPACE/yaraniha.keystore"
-          ls -lh "$GITHUB_WORKSPACE/yaraniha.keystore"
+
+          if [ -z "${KEYSTORE_PASSWORD:-}" ]; then
+            echo "ERROR: ANDROID_KEYSTORE_PASSWORD secret is missing."
+            exit 1
+          fi
+
+          if [ -z "${KEY_ALIAS:-}" ]; then
+            echo "ERROR: ANDROID_KEY_ALIAS secret is missing."
+            exit 1
+          fi
+
+          if [ -z "${KEY_PASSWORD:-}" ]; then
+            echo "ERROR: ANDROID_KEY_PASSWORD secret is missing."
+            exit 1
+          fi
+
+          printf '%s' "$KEYSTORE_BASE64" | base64 --decode > "$KEYSTORE_PATH"
+
+          if [ ! -s "$KEYSTORE_PATH" ]; then
+            echo "ERROR: decoded keystore is empty."
+            exit 1
+          fi
+
+          echo "Keystore restored:"
+          ls -lh "$KEYSTORE_PATH"
+
+          echo "Validating keystore, alias and passwords..."
+          keytool \
+            -list \
+            -v \
+            -keystore "$KEYSTORE_PATH" \
+            -storepass "$KEYSTORE_PASSWORD" \
+            -alias "$KEY_ALIAS" \
+            -keypass "$KEY_PASSWORD" \
+            >/tmp/keystore-info.txt
+
+          echo "Keystore validation: OK"
+
+          KEYSTORE_CERT_SHA256="$(
+            awk -F': ' '/SHA256:/{print $2; exit}' /tmp/keystore-info.txt
+          )"
+
+          if [ -z "$KEYSTORE_CERT_SHA256" ]; then
+            echo "ERROR: Could not read SHA-256 certificate fingerprint from keystore."
+            exit 1
+          fi
+
+          echo "Signing certificate SHA-256: $KEYSTORE_CERT_SHA256"
 
       - name: Generate Android project
         shell: bash
@@ -86,50 +144,9 @@ jobs:
           mkdir -p app/src/main/res/layout
           mkdir -p app/src/main/res/values
           mkdir -p app/src/main/res/values-night
+          mkdir -p app/src/main/res/xml
           mkdir -p app/src/main/res/drawable
           mkdir -p gradle/wrapper
-
-          # -----------------------------------------------------------------
-          # Native libs: download a real, valid .so from a well-known
-          # Android native library repo (Termux's libandroid-support).
-          # A real .so guarantees AGP will correctly classify the APK
-          # by ABI when splits are enabled.
-          # -----------------------------------------------------------------
-          mkdir -p app/src/main/jniLibs/arm64-v8a
-          mkdir -p app/src/main/jniLibs/armeabi-v7a
-          mkdir -p app/src/main/jniLibs/x86
-
-          # Download prebuilt .so for each ABI (tiny, public, Apache-2.0).
-          # Source: https://github.com/termux/termux-packages
-          set +e
-          curl -fsSL -o /tmp/lib-arm64.so \
-            "https://github.com/termux/termux-packages/raw/master/packages/libandroid-support/src/libandroid-support.c" \
-            >/dev/null 2>&1
-          set -e
-
-          # The above URL is source; use the smallest reliable approach:
-          # build a genuinely valid ELF shared object via the NDK is
-          # overkill. Instead, use Java's own `jar` tooling: any .so file
-          # is accepted by AGP as long as it has correct ELF magic.
-          #
-          # Generate minimal but *complete* ELF headers (64-bit ARM,
-          # 32-bit ARM, 32-bit x86) so AGP can classify them.
-
-          # ---- arm64-v8a (ELF64, machine = 0xB7 AArch64) ----
-          printf '\x7fELF\x02\x01\x01\x00\x00\x00\x00\x00\x00\x00\x00\x00\x03\x00\xb7\x00\x01\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x40\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x40\x00\x38\x00\x01\x00\x40\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00' \
-            > app/src/main/jniLibs/arm64-v8a/libyaraniha_abi.so
-
-          # ---- armeabi-v7a (ELF32, machine = 0x28 ARM) ----
-          printf '\x7fELF\x01\x01\x01\x00\x00\x00\x00\x00\x00\x00\x00\x00\x03\x00\x28\x00\x01\x00\x00\x00\x34\x00\x00\x00\x34\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x34\x00\x20\x00\x01\x00\x28\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00' \
-            > app/src/main/jniLibs/armeabi-v7a/libyaraniha_abi.so
-
-          # ---- x86 (ELF32, machine = 0x03 i386) ----
-          printf '\x7fELF\x01\x01\x01\x00\x00\x00\x00\x00\x00\x00\x00\x00\x03\x00\x03\x00\x01\x00\x00\x00\x34\x00\x00\x00\x34\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x34\x00\x20\x00\x01\x00\x03\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00' \
-            > app/src/main/jniLibs/x86/libyaraniha_abi.so
-
-          ls -la app/src/main/jniLibs/arm64-v8a/
-          ls -la app/src/main/jniLibs/armeabi-v7a/
-          ls -la app/src/main/jniLibs/x86/
 
           cp yaraniha.png app/src/main/res/drawable/yaraniha.png
 
@@ -151,6 +168,7 @@ jobs:
               <uses-feature
                   android:name="android.hardware.camera"
                   android:required="false" />
+
               <uses-feature
                   android:name="android.hardware.camera.autofocus"
                   android:required="false" />
@@ -162,7 +180,8 @@ jobs:
                   android:label="Yaraniha"
                   android:supportsRtl="true"
                   android:theme="@style/AppTheme"
-                  android:usesCleartextTraffic="false">
+                  android:usesCleartextTraffic="true"
+                  android:networkSecurityConfig="@xml/network_security_config">
 
                   <activity
                       android:name=".MainActivity"
@@ -171,15 +190,38 @@ jobs:
                       android:hardwareAccelerated="true"
                       android:launchMode="singleTask"
                       android:windowSoftInputMode="adjustResize">
+
                       <intent-filter>
                           <action android:name="android.intent.action.MAIN" />
                           <category android:name="android.intent.category.LAUNCHER" />
                       </intent-filter>
-                  </activity>
 
+                  </activity>
               </application>
 
           </manifest>
+          EOF
+
+          # =========================================================
+          # Network security configuration
+          #
+          # The website is loaded over HTTPS, but some legacy image
+          # URLs/CDN resources may still be HTTP. This allows WebView
+          # to request those resources instead of failing them at the
+          # Android network-security layer.
+          #
+          # Tighten this to domain-specific rules after the website
+          # image URLs are migrated completely to HTTPS.
+          # =========================================================
+          cat > app/src/main/res/xml/network_security_config.xml <<'EOF'
+          <?xml version="1.0" encoding="utf-8"?>
+          <network-security-config>
+              <base-config cleartextTrafficPermitted="true">
+                  <trust-anchors>
+                      <certificates src="system" />
+                  </trust-anchors>
+              </base-config>
+          </network-security-config>
           EOF
 
           # =========================================================
@@ -199,13 +241,18 @@ jobs:
           import android.os.Build
           import android.os.Bundle
           import android.os.Environment
+          import android.util.Log
           import android.webkit.CookieManager
           import android.webkit.DownloadListener
+          import android.webkit.SslErrorHandler
           import android.webkit.URLUtil
           import android.webkit.ValueCallback
           import android.webkit.WebChromeClient
+          import android.webkit.WebResourceError
+          import android.webkit.WebResourceRequest
           import android.webkit.WebSettings
           import android.webkit.WebView
+          import android.webkit.PermissionRequest
           import android.webkit.WebViewClient
           import android.widget.Toast
           import androidx.activity.OnBackPressedCallback
@@ -219,6 +266,7 @@ jobs:
               private var filePathCallback: ValueCallback<Array<Uri>>? = null
 
               companion object {
+                  private const val TAG = "YaranihaWebView"
                   private const val WEBSITE_URL = "https://app.yaran.info"
                   private const val FILE_CHOOSER_REQUEST_CODE = 1001
                   private const val PERMISSION_REQUEST_CODE = 2001
@@ -230,12 +278,15 @@ jobs:
                   setContentView(R.layout.activity_main)
 
                   webView = findViewById(R.id.webView)
+
                   setupWebView()
                   setupBackNavigation()
                   requestInitialPermissions()
 
                   if (savedInstanceState == null) {
                       webView?.loadUrl(WEBSITE_URL)
+                  } else {
+                      webView?.restoreState(savedInstanceState)
                   }
               }
 
@@ -245,37 +296,172 @@ jobs:
                   val settings = wv.settings
 
                   settings.javaScriptEnabled = true
-                  settings.javaScriptCanOpenWindowsAutomatically = false
+                  settings.javaScriptCanOpenWindowsAutomatically = true
                   settings.domStorageEnabled = true
                   settings.databaseEnabled = true
+
+                  // Fixes cases where network images were disabled/blocked.
                   settings.loadsImagesAutomatically = true
+                  settings.blockNetworkImage = false
+                  settings.blockNetworkLoads = false
+
                   settings.useWideViewPort = true
-                  settings.loadWithOverviewMode = true
+                  settings.loadWithOverviewMode = false
+                  settings.builtInZoomControls = false
+                  settings.displayZoomControls = false
+
+                  // Preserve normal WebView caching.
                   settings.cacheMode = WebSettings.LOAD_DEFAULT
+
+                  // The wrapper itself does not use file:// content.
                   settings.allowFileAccess = false
-                  settings.allowContentAccess = false
+                  settings.allowContentAccess = true
                   settings.allowFileAccessFromFileURLs = false
                   settings.allowUniversalAccessFromFileURLs = false
-                  settings.mixedContentMode = WebSettings.MIXED_CONTENT_NEVER_ALLOW
+
+                  // The website can contain legacy HTTP images/resources.
+                  // Compatibility mode is safer than ALWAYS_ALLOW while
+                  // still permitting passive mixed content in many cases.
+                  if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.LOLLIPOP) {
+                      settings.mixedContentMode =
+                          WebSettings.MIXED_CONTENT_COMPATIBILITY_MODE
+                  }
+
+                  // Some login/image/CDN flows rely on third-party cookies.
+                  CookieManager.getInstance().apply {
+                      setAcceptCookie(true)
+                      setAcceptThirdPartyCookies(wv, true)
+                  }
+
+                  wv.isFocusable = true
+                  wv.isFocusableInTouchMode = true
+                  wv.setLayerType(android.view.View.LAYER_TYPE_HARDWARE, null)
 
                   wv.webViewClient = object : WebViewClient() {
-                      override fun shouldOverrideUrlLoading(view: WebView?, url: String?): Boolean {
+
+                      @Suppress("DEPRECATION")
+                      override fun shouldOverrideUrlLoading(
+                          view: WebView?,
+                          url: String?
+                      ): Boolean {
+                          return handleUrl(url)
+                      }
+
+                      override fun shouldOverrideUrlLoading(
+                          view: WebView,
+                          request: WebResourceRequest
+                      ): Boolean {
+                          // Do not call loadUrl() and return true for normal
+                          // HTTP(S) navigation; WebView should handle it itself.
+                          return if (request.isForMainFrame) {
+                              handleUrl(request.url.toString())
+                          } else {
+                              false
+                          }
+                      }
+
+                      private fun handleUrl(url: String?): Boolean {
                           if (url.isNullOrBlank()) return false
-                          view?.loadUrl(url)
-                          return true
+
+                          return when (Uri.parse(url).scheme?.lowercase()) {
+                              "http", "https" -> false
+
+                              // mailto:, tel:, market:, intent:, etc.
+                              else -> {
+                                  try {
+                                      val intent = Intent(Intent.ACTION_VIEW, Uri.parse(url))
+                                      startActivity(intent)
+                                      true
+                                  } catch (e: Exception) {
+                                      Log.w(TAG, "External URL handler failed: $url", e)
+                                      false
+                                  }
+                              }
+                          }
                       }
 
                       override fun onReceivedSslError(
                           view: WebView?,
-                          handler: android.webkit.SslErrorHandler?,
+                          handler: SslErrorHandler?,
                           error: android.net.http.SslError?
                       ) {
+                          // Never bypass certificate validation.
+                          Log.e(TAG, "SSL error: $error")
                           handler?.cancel()
-                          Toast.makeText(this@MainActivity, "SSL error", Toast.LENGTH_SHORT).show()
+                          if (!isFinishing) {
+                              Toast.makeText(
+                                  this@MainActivity,
+                                  "SSL error",
+                                  Toast.LENGTH_SHORT
+                              ).show()
+                          }
+                      }
+
+                      override fun onReceivedError(
+                          view: WebView?,
+                          request: WebResourceRequest?,
+                          error: WebResourceError?
+                      ) {
+                          super.onReceivedError(view, request, error)
+
+                          if (request?.isForMainFrame == true) {
+                              Log.e(
+                                  TAG,
+                                  "Main frame load error: ${error?.errorCode} ${error?.description}"
+                              )
+                          } else {
+                              Log.w(
+                                  TAG,
+                                  "Subresource load error: ${request?.url} -> ${error?.errorCode}"
+                              )
+                          }
+                      }
+
+                      override fun onReceivedHttpError(
+                          view: WebView?,
+                          request: WebResourceRequest?,
+                          errorResponse: android.webkit.WebResourceResponse?
+                      ) {
+                          super.onReceivedHttpError(view, request, errorResponse)
+
+                          // Useful for diagnosing missing images/CDN responses.
+                          Log.w(
+                              TAG,
+                              "HTTP ${errorResponse?.statusCode} for ${request?.url}"
+                          )
                       }
                   }
 
                   wv.webChromeClient = object : WebChromeClient() {
+
+                      override fun onPermissionRequest(request: PermissionRequest?) {
+                          if (request == null) return
+
+                          // Only grant camera capture to the actual Yaraniha origin.
+                          // This is required by WebView for getUserMedia-based
+                          // QR/document scanning even when Android CAMERA permission
+                          // has already been granted.
+                          val requestHost = request.origin?.host
+                          val allowedHost = Uri.parse(WEBSITE_URL).host
+
+                          if (
+                              requestHost == allowedHost &&
+                              request.resources?.contains(
+                                  PermissionRequest.RESOURCE_VIDEO_CAPTURE
+                              ) == true &&
+                              ContextCompat.checkSelfPermission(
+                                  this@MainActivity,
+                                  Manifest.permission.CAMERA
+                              ) == PackageManager.PERMISSION_GRANTED
+                          ) {
+                              request.grant(
+                                  arrayOf(PermissionRequest.RESOURCE_VIDEO_CAPTURE)
+                              )
+                          } else {
+                              request.deny()
+                          }
+                      }
+
                       override fun onShowFileChooser(
                           webView: WebView?,
                           filePath: ValueCallback<Array<Uri>>?,
@@ -285,12 +471,13 @@ jobs:
                           filePathCallback = filePath
 
                           val intent = try {
-                              fileChooserParams?.createIntent() ?: Intent(Intent.ACTION_GET_CONTENT).apply {
-                                  addCategory(Intent.CATEGORY_OPENABLE)
-                                  type = "*/*"
-                              }
+                              fileChooserParams?.createIntent()
+                                  ?: Intent(Intent.ACTION_OPEN_DOCUMENT).apply {
+                                      addCategory(Intent.CATEGORY_OPENABLE)
+                                      type = "*/*"
+                                  }
                           } catch (e: Exception) {
-                              Intent(Intent.ACTION_GET_CONTENT).apply {
+                              Intent(Intent.ACTION_OPEN_DOCUMENT).apply {
                                   addCategory(Intent.CATEGORY_OPENABLE)
                                   type = "*/*"
                               }
@@ -303,94 +490,163 @@ jobs:
                               )
                               true
                           } catch (e: Exception) {
+                              Log.e(TAG, "File chooser failed", e)
                               filePathCallback = null
                               false
                           }
                       }
                   }
 
-                  wv.setDownloadListener(DownloadListener { url, userAgent, contentDisposition, mimeType, _ ->
-                      try {
-                          val uri = Uri.parse(url)
-                          val cookies = CookieManager.getInstance().getCookie(url)
-                          val fileName = URLUtil.guessFileName(url, contentDisposition, mimeType)
-                          val request = DownloadManager.Request(uri)
+                  wv.setDownloadListener(
+                      DownloadListener { url, userAgent, contentDisposition, mimeType, _ ->
+                          downloadFile(
+                              url = url,
+                              userAgent = userAgent,
+                              contentDisposition = contentDisposition,
+                              mimeType = mimeType
+                          )
+                      }
+                  )
+              }
 
-                          request.setTitle(fileName)
-                          request.setDescription("Downloading...")
-                          if (!mimeType.isNullOrBlank()) request.setMimeType(mimeType)
-                          request.setNotificationVisibility(
+              private fun downloadFile(
+                  url: String,
+                  userAgent: String?,
+                  contentDisposition: String?,
+                  mimeType: String?
+              ) {
+                  try {
+                      val uri = Uri.parse(url)
+                      val cookies = CookieManager.getInstance().getCookie(url)
+                      val fileName = URLUtil.guessFileName(
+                          url,
+                          contentDisposition,
+                          mimeType
+                      )
+
+                      val request = DownloadManager.Request(uri).apply {
+                          setTitle(fileName)
+                          setDescription("Downloading...")
+                          setNotificationVisibility(
                               DownloadManager.Request.VISIBILITY_VISIBLE_NOTIFY_COMPLETED
                           )
-                          request.setAllowedOverRoaming(true)
+                          setAllowedOverRoaming(true)
 
                           if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.N) {
-                              request.setAllowedOverMetered(true)
+                              setAllowedOverMetered(true)
                           }
 
-                          if (!userAgent.isNullOrBlank()) request.addRequestHeader("User-Agent", userAgent)
-                          if (!cookies.isNullOrBlank()) request.addRequestHeader("Cookie", cookies)
-                          request.addRequestHeader("Referer", WEBSITE_URL)
-                          request.setDestinationInExternalPublicDir(Environment.DIRECTORY_DOWNLOADS, fileName)
+                          if (!mimeType.isNullOrBlank()) {
+                              setMimeType(mimeType)
+                          }
 
-                          val dm = getSystemService(Context.DOWNLOAD_SERVICE) as DownloadManager
-                          dm.enqueue(request)
-                          Toast.makeText(this, "Download started: $fileName", Toast.LENGTH_SHORT).show()
-                      } catch (e: Exception) {
-                          Toast.makeText(this, "Download error", Toast.LENGTH_SHORT).show()
+                          if (!userAgent.isNullOrBlank()) {
+                              addRequestHeader("User-Agent", userAgent)
+                          }
+
+                          if (!cookies.isNullOrBlank()) {
+                              addRequestHeader("Cookie", cookies)
+                          }
+
+                          addRequestHeader("Referer", WEBSITE_URL)
+
+                          setDestinationInExternalPublicDir(
+                              Environment.DIRECTORY_DOWNLOADS,
+                              fileName
+                          )
                       }
-                  })
+
+                      val dm = getSystemService(Context.DOWNLOAD_SERVICE) as DownloadManager
+                      dm.enqueue(request)
+
+                      Toast.makeText(
+                          this,
+                          "Download started: $fileName",
+                          Toast.LENGTH_SHORT
+                      ).show()
+                  } catch (e: Exception) {
+                      Log.e(TAG, "Download error", e)
+                      Toast.makeText(
+                          this,
+                          "Download error",
+                          Toast.LENGTH_SHORT
+                      ).show()
+                  }
               }
 
               private fun setupBackNavigation() {
-                  onBackPressedDispatcher.addCallback(this, object : OnBackPressedCallback(true) {
-                      override fun handleOnBackPressed() {
-                          val wv = webView
-                          if (wv != null && wv.canGoBack()) {
-                              wv.goBack()
-                          } else {
-                              isEnabled = false
-                              onBackPressedDispatcher.onBackPressed()
+                  onBackPressedDispatcher.addCallback(
+                      this,
+                      object : OnBackPressedCallback(true) {
+                          override fun handleOnBackPressed() {
+                              val wv = webView
+
+                              if (wv != null && wv.canGoBack()) {
+                                  wv.goBack()
+                              } else {
+                                  isEnabled = false
+                                  onBackPressedDispatcher.onBackPressed()
+                              }
                           }
                       }
-                  })
+                  )
               }
 
               private fun requestInitialPermissions() {
                   val permissions = mutableListOf<String>()
 
-                  if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.M &&
-                      ContextCompat.checkSelfPermission(this, Manifest.permission.CAMERA)
-                      != PackageManager.PERMISSION_GRANTED) {
+                  if (
+                      Build.VERSION.SDK_INT >= Build.VERSION_CODES.M &&
+                      ContextCompat.checkSelfPermission(
+                          this,
+                          Manifest.permission.CAMERA
+                      ) != PackageManager.PERMISSION_GRANTED
+                  ) {
                       permissions.add(Manifest.permission.CAMERA)
                   }
 
-                  if (Build.VERSION.SDK_INT >= 33 &&
-                      ContextCompat.checkSelfPermission(this, Manifest.permission.POST_NOTIFICATIONS)
-                      != PackageManager.PERMISSION_GRANTED) {
+                  if (
+                      Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU &&
+                      ContextCompat.checkSelfPermission(
+                          this,
+                          Manifest.permission.POST_NOTIFICATIONS
+                      ) != PackageManager.PERMISSION_GRANTED
+                  ) {
                       permissions.add(Manifest.permission.POST_NOTIFICATIONS)
                   }
 
-                  if (Build.VERSION.SDK_INT <= Build.VERSION_CODES.P &&
-                      ContextCompat.checkSelfPermission(this, Manifest.permission.WRITE_EXTERNAL_STORAGE)
-                      != PackageManager.PERMISSION_GRANTED) {
+                  if (
+                      Build.VERSION.SDK_INT <= Build.VERSION_CODES.P &&
+                      ContextCompat.checkSelfPermission(
+                          this,
+                          Manifest.permission.WRITE_EXTERNAL_STORAGE
+                      ) != PackageManager.PERMISSION_GRANTED
+                  ) {
                       permissions.add(Manifest.permission.WRITE_EXTERNAL_STORAGE)
                   }
 
                   if (permissions.isNotEmpty()) {
                       ActivityCompat.requestPermissions(
-                          this, permissions.toTypedArray(), PERMISSION_REQUEST_CODE
+                          this,
+                          permissions.toTypedArray(),
+                          PERMISSION_REQUEST_CODE
                       )
                   }
               }
 
               @Suppress("DEPRECATION")
-              override fun onActivityResult(requestCode: Int, resultCode: Int, data: Intent?) {
+              override fun onActivityResult(
+                  requestCode: Int,
+                  resultCode: Int,
+                  data: Intent?
+              ) {
                   super.onActivityResult(requestCode, resultCode, data)
+
                   if (requestCode != FILE_CHOOSER_REQUEST_CODE) return
 
                   val callback = filePathCallback
                   filePathCallback = null
+
                   if (callback == null) return
 
                   if (resultCode != Activity.RESULT_OK) {
@@ -401,23 +657,40 @@ jobs:
                   val results: Array<Uri>? = when {
                       data?.clipData != null -> {
                           val clipData = data.clipData!!
-                          Array(clipData.itemCount) { i -> clipData.getItemAt(i).uri }
+                          Array(clipData.itemCount) { index ->
+                              clipData.getItemAt(index).uri
+                          }
                       }
-                      data?.data != null -> arrayOf(data.data!!)
+
+                      data?.data != null -> {
+                          arrayOf(data.data!!)
+                      }
+
                       else -> null
                   }
 
                   callback.onReceiveValue(results)
               }
 
+              override fun onSaveInstanceState(outState: Bundle) {
+                  webView?.saveState(outState)
+                  super.onSaveInstanceState(outState)
+              }
+
               override fun onDestroy() {
                   filePathCallback?.onReceiveValue(null)
                   filePathCallback = null
-                  webView?.let {
-                      it.stopLoading()
-                      it.webChromeClient = null
-                      it.destroy()
+
+                  webView?.let { view ->
+                      CookieManager.getInstance().flush()
+
+                      view.stopLoading()
+                      view.loadUrl("about:blank")
+                      view.webChromeClient = null
+                      view.webViewClient = null
+                      view.destroy()
                   }
+
                   webView = null
                   super.onDestroy()
               }
@@ -451,6 +724,8 @@ jobs:
               <style name="AppTheme" parent="Theme.AppCompat.Light.NoActionBar">
                   <item name="android:windowNoTitle">true</item>
                   <item name="android:windowActionModeOverlay">true</item>
+                  <item name="android:fontFamily">sans</item>
+                  <item name="android:colorAccent">#3F51B5</item>
               </style>
           </resources>
           EOF
@@ -461,6 +736,8 @@ jobs:
               <style name="AppTheme" parent="Theme.AppCompat.NoActionBar">
                   <item name="android:windowNoTitle">true</item>
                   <item name="android:windowActionModeOverlay">true</item>
+                  <item name="android:fontFamily">sans</item>
+                  <item name="android:colorAccent">#9FA8DA</item>
               </style>
           </resources>
           EOF
@@ -476,7 +753,7 @@ jobs:
           EOF
 
           # =========================================================
-          # App build.gradle  ← ★ اصلاح اصلی اینجاست ★
+          # App build.gradle
           # =========================================================
           cat > app/build.gradle <<'EOF'
           plugins {
@@ -492,18 +769,16 @@ jobs:
                   applicationId 'com.mohammadkhxm.browser'
                   minSdk 23
                   targetSdk 34
-                  versionCode 1
-                  versionName '1.0'
+                  versionCode 2
+                  versionName '1.1'
                   vectorDrawables.useSupportLibrary = true
               }
 
-              // ═════════════════════════════════════════════════════
-              // ★ توجه ★  بدون `enable true` این بلاک کاملاً
-              // نادیده گرفته می‌شود و AGP فقط یک APK می‌سازد.
-              // ═════════════════════════════════════════════════════
+              // Keep the requested per-ABI outputs, but DO NOT inject
+              // fake/invalid .so files. The app itself has no native code.
               splits {
                   abi {
-                      enable true                    // ★ این خط حیاتی است ★
+                      enable true
                       reset()
                       include 'arm64-v8a', 'armeabi-v7a', 'x86'
                       universalApk true
@@ -513,9 +788,9 @@ jobs:
               signingConfigs {
                   release {
                       storeFile file("../yaraniha.keystore")
-                      storePassword System.getenv("KEYSTORE_PASSWORD") ?: ""
-                      keyAlias System.getenv("KEY_ALIAS") ?: ""
-                      keyPassword System.getenv("KEY_PASSWORD") ?: ""
+                      storePassword System.getenv("KEYSTORE_PASSWORD")
+                      keyAlias System.getenv("KEY_ALIAS")
+                      keyPassword System.getenv("KEY_PASSWORD")
                       enableV1Signing true
                       enableV2Signing true
                       enableV3Signing true
@@ -529,20 +804,14 @@ jobs:
                       shrinkResources false
                       debuggable false
                   }
-                  debug {
-                      signingConfig signingConfigs.release
-                      minifyEnabled false
-                      shrinkResources false
-                      debuggable false
-                  }
               }
 
               packaging {
-                  jniLibs {
-                      keepDebugSymbols += "**/*.so"
-                  }
                   resources {
-                      excludes += ['META-INF/*.version', 'META-INF/*.kotlin_module']
+                      excludes += [
+                          'META-INF/*.version',
+                          'META-INF/*.kotlin_module'
+                      ]
                   }
               }
 
@@ -579,6 +848,7 @@ jobs:
                   gradlePluginPortal()
               }
           }
+
           dependencyResolutionManagement {
               repositoriesMode.set(RepositoriesMode.FAIL_ON_PROJECT_REPOS)
               repositories {
@@ -586,6 +856,7 @@ jobs:
                   mavenCentral()
               }
           }
+
           rootProject.name = 'Yaraniha'
           include ':app'
           EOF
@@ -621,57 +892,168 @@ jobs:
           cat > gradlew <<'EOF'
           #!/bin/sh
           APP_HOME=$(CDPATH= cd -- "$(dirname -- "$0")" && pwd)
+
           exec java \
             -cp "$APP_HOME/gradle/wrapper/gradle-wrapper.jar" \
             org.gradle.wrapper.GradleWrapperMain \
             "$@"
           EOF
+
           chmod +x gradlew
 
-          echo "Generated Android project with ABI splits enabled."
+          echo "Android project generated successfully."
 
-      - name: Build Release APKs
+          echo
+          echo "=== Generated WebView configuration ==="
+          grep -E 'usesCleartextTraffic|networkSecurityConfig' app/src/main/AndroidManifest.xml
+          grep -E 'mixedContentMode|allowContentAccess|acceptThirdPartyCookies|loadsImagesAutomatically' \
+            app/src/main/java/com/mohammadkhxm/browser/MainActivity.kt || true
+
+      - name: Build signed release APKs
         shell: bash
         run: |
           set -euo pipefail
-          chmod +x ./gradlew
-          ./gradlew assembleRelease --no-daemon --stacktrace
 
-      - name: List and verify APKs
+          chmod +x ./gradlew
+
+          ./gradlew clean assembleRelease \
+            --no-daemon \
+            --stacktrace
+
+      - name: Verify APK alignment and signatures
         shell: bash
         run: |
           set -euo pipefail
 
           APK_DIR="app/build/outputs/apk/release"
-          echo "=== All files in $APK_DIR ==="
-          ls -la "$APK_DIR"
+          APKSIGNER="$ANDROID_HOME/build-tools/34.0.0/apksigner"
+          ZIPALIGN="$ANDROID_HOME/build-tools/34.0.0/zipalign"
 
-          echo
-          echo "=== APKs found ==="
-          find "$APK_DIR" -maxdepth 1 -name "*.apk" -exec ls -lh {} \;
-
-          APK_COUNT=$(find "$APK_DIR" -maxdepth 1 -name "*.apk" | wc -l)
-          echo "Total APKs: $APK_COUNT"
-
-          if [ "$APK_COUNT" -lt 4 ]; then
-            echo "WARNING: Expected 4 APKs (3 ABI + universal), got $APK_COUNT"
-          else
-            echo "SUCCESS: 4 split APKs generated."
+          if [ ! -x "$APKSIGNER" ]; then
+            echo "ERROR: apksigner not found."
+            exit 1
           fi
 
+          if [ ! -x "$ZIPALIGN" ]; then
+            echo "ERROR: zipalign not found."
+            exit 1
+          fi
+
+          APK_COUNT=$(find "$APK_DIR" -maxdepth 1 -name "*.apk" | wc -l)
+
+          echo "=== APKs ==="
+          find "$APK_DIR" -maxdepth 1 -name "*.apk" -print -exec ls -lh {} \;
+
+          if [ "$APK_COUNT" -lt 4 ]; then
+            echo "ERROR: Expected at least 4 APKs (3 ABI + universal), got $APK_COUNT"
+            exit 1
+          fi
+
+          KEYSTORE_CERT_SHA256="$(
+            keytool \
+              -list \
+              -v \
+              -keystore "$GITHUB_WORKSPACE/yaraniha.keystore" \
+              -storepass "$KEYSTORE_PASSWORD" \
+              -alias "$KEY_ALIAS" \
+              -keypass "$KEY_PASSWORD" \
+              | awk -F': ' '/SHA256:/{print $2; exit}'
+          )"
+
+          if [ -z "$KEYSTORE_CERT_SHA256" ]; then
+            echo "ERROR: Could not read keystore SHA-256 fingerprint."
+            exit 1
+          fi
+
+          normalize_fp() {
+            echo "$1" | tr -d ':[:space:]' | tr '[:lower:]' '[:upper:]'
+          }
+
+          EXPECTED_FP="$(normalize_fp "$KEYSTORE_CERT_SHA256")"
+
           echo
-          echo "=== Signature verification ==="
+          echo "Expected signing certificate:"
+          echo "$KEYSTORE_CERT_SHA256"
+
           for apk in "$APK_DIR"/*.apk; do
-            echo "--- $(basename "$apk") ---"
-            "$ANDROID_HOME/build-tools/34.0.0/apksigner" verify --verbose "$apk" 2>&1 | \
-              grep -E "Verified using|Number of signers" || true
             echo
+            echo "============================================================"
+            echo "VERIFY: $(basename "$apk")"
+            echo "============================================================"
+
+            "$ZIPALIGN" -c -P 16 -v 4 "$apk" >/tmp/zipalign.txt
+            echo "zipalign: OK"
+
+            VERIFY_OUTPUT=$(
+              "$APKSIGNER" verify \
+                --verbose \
+                --print-certs \
+                "$apk" 2>&1
+            )
+
+            echo "$VERIFY_OUTPUT"
+
+            echo "$VERIFY_OUTPUT" | grep -q \
+              "Verified using v2 scheme (APK Signature Scheme v2): true" || {
+                echo "ERROR: v2 signature verification failed."
+                exit 1
+              }
+
+            echo "$VERIFY_OUTPUT" | grep -q \
+              "Verified using v3 scheme (APK Signature Scheme v3): true" || {
+                echo "ERROR: v3 signature verification failed."
+                exit 1
+              }
+
+            SIGNER_COUNT=$(
+              echo "$VERIFY_OUTPUT" |
+                awk -F': ' '/Number of signers:/{print $2; exit}'
+            )
+
+            if [ "$SIGNER_COUNT" != "1" ]; then
+              echo "ERROR: Expected exactly 1 signer, got: ${SIGNER_COUNT:-unknown}"
+              exit 1
+            fi
+
+            APK_FP=$(
+              echo "$VERIFY_OUTPUT" |
+                awk -F': ' '/Signer #1 certificate SHA-256 digest:/{print $2; exit}'
+            )
+
+            if [ -z "$APK_FP" ]; then
+              echo "ERROR: Could not read APK certificate fingerprint."
+              exit 1
+            fi
+
+            NORMALIZED_APK_FP="$(normalize_fp "$APK_FP")"
+
+            if [ "$NORMALIZED_APK_FP" != "$EXPECTED_FP" ]; then
+              echo "ERROR: APK certificate does not match the release keystore."
+              echo "Expected: $KEYSTORE_CERT_SHA256"
+              echo "Actual:   $APK_FP"
+              exit 1
+            fi
+
+            echo "certificate fingerprint: OK"
+            echo "signer count: 1"
+            echo "v2: OK"
+            echo "v3: OK"
           done
+
+          echo
+          echo "SUCCESS: every APK is aligned, signed and verified with the configured keystore."
 
       - name: Upload all APKs
         uses: actions/upload-artifact@v4
         with:
-          name: yaraniha-multi-abi-apks
+          name: yaraniha-signed-multi-abi-apks
           path: app/build/outputs/apk/release/*.apk
           if-no-files-found: error
           retention-days: 30
+
+      - name: Clean sensitive signing material
+        if: always()
+        shell: bash
+        run: |
+          rm -f "$GITHUB_WORKSPACE/yaraniha.keystore"
+          rm -f /tmp/keystore-info.txt
