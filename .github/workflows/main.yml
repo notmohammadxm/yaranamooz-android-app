@@ -1000,21 +1000,89 @@ jobs:
           set -euo pipefail
 
           APK_DIR="app/build/outputs/apk/release"
+          AAPT2="$ANDROID_HOME/build-tools/34.0.0/aapt2"
 
-          echo "Checking that the repository image is packaged..."
+          if [ ! -x "$AAPT2" ]; then
+            echo "ERROR: aapt2 not found at $AAPT2"
+            exit 1
+          fi
+
+          echo "Checking that drawable/yaraniha is present in the compiled resource table..."
 
           for apk in "$APK_DIR"/*.apk; do
             echo "--- $(basename "$apk") ---"
 
-            unzip -l "$apk" | grep -q "res/drawable/yaraniha.png" || {
-              echo "ERROR: yaraniha.png is missing from $(basename "$apk")"
-              exit 1
-            }
+            # Release builds shorten resource file paths inside the APK
+            # (e.g. res/drawable/yaraniha.png -> res/-B.png), so we cannot
+            # grep the zip listing. Instead we ask aapt2 to read the compiled
+            # resource table (resources.arsc) and confirm the logical entry.
+            "$AAPT2" dump resources "$apk" \
+              | grep -q "drawable/yaraniha" || {
+                echo "ERROR: drawable/yaraniha is missing from $(basename "$apk")"
+                exit 1
+              }
 
-            unzip -l "$apk" | grep -q "lib/arm64-v8a/libyaraniha_abi.so" || true
+            # Sanity: the launcher icon reference in the manifest should also
+            # resolve to drawable/yaraniha.
+            "$AAPT2" dump xmltree --file AndroidManifest.xml "$apk" \
+              | grep -q "drawable/yaraniha" || {
+                echo "ERROR: AndroidManifest does not reference @drawable/yaraniha in $(basename "$apk")"
+                exit 1
+              }
 
-            echo "Image asset present."
+            echo "Drawable resource present."
           done
+
+          echo
+          echo "Resource check passed for all APKs."
+
+      - name: Verify native ABI libraries per APK
+        shell: bash
+        run: |
+          set -euo pipefail
+
+          APK_DIR="app/build/outputs/apk/release"
+
+          echo "Checking that each split APK contains the expected ABI library..."
+
+          for apk in "$APK_DIR"/*.apk; do
+            name="$(basename "$apk")"
+            echo "--- $name ---"
+
+            case "$name" in
+              *arm64-v8a*)
+                abis=("arm64-v8a")
+                ;;
+              *armeabi-v7a*)
+                abis=("armeabi-v7a")
+                ;;
+              *x86*)
+                abis=("x86")
+                ;;
+              *universal*)
+                abis=("arm64-v8a" "armeabi-v7a" "x86")
+                ;;
+              *)
+                abis=()
+                ;;
+            esac
+
+            if [ "${#abis[@]}" -eq 0 ]; then
+              echo "Skipping unknown APK: $name"
+              continue
+            fi
+
+            for abi in "${abis[@]}"; do
+              unzip -l "$apk" | grep -q "lib/$abi/libyaraniha_abi.so" || {
+                echo "ERROR: lib/$abi/libyaraniha_abi.so missing from $name"
+                exit 1
+              }
+              echo "  lib/$abi/libyaraniha_abi.so present"
+            done
+          done
+
+          echo
+          echo "ABI library check passed."
 
       - name: Publish APK artifacts
         uses: actions/upload-artifact@v4
