@@ -1014,19 +1014,16 @@ jobs:
 
             # Release builds shorten resource file paths inside the APK
             # (e.g. res/drawable/yaraniha.png -> res/-B.png), so we cannot
-            # grep the zip listing. Instead we ask aapt2 to read the compiled
-            # resource table (resources.arsc) and confirm the logical entry.
+            # grep the zip listing for the original path. Instead we ask
+            # aapt2 to read the compiled resource table (resources.arsc)
+            # and confirm the logical entry exists.
+            #
+            # Note: we deliberately do NOT grep AndroidManifest.xml for
+            # "drawable/yaraniha" -- the compiled manifest stores a numeric
+            # resource ID (e.g. 0x7f080000), not the string form.
             "$AAPT2" dump resources "$apk" \
               | grep -q "drawable/yaraniha" || {
                 echo "ERROR: drawable/yaraniha is missing from $(basename "$apk")"
-                exit 1
-              }
-
-            # Sanity: the launcher icon reference in the manifest should also
-            # resolve to drawable/yaraniha.
-            "$AAPT2" dump xmltree --file AndroidManifest.xml "$apk" \
-              | grep -q "drawable/yaraniha" || {
-                echo "ERROR: AndroidManifest does not reference @drawable/yaraniha in $(basename "$apk")"
                 exit 1
               }
 
