@@ -89,6 +89,23 @@ jobs:
           mkdir -p app/src/main/res/drawable
           mkdir -p gradle/wrapper
 
+          # -----------------------------------------------------------------
+          # Dummy native libs — this is what forces AGP to produce real
+          # per-ABI split APKs.  Without at least one .so per ABI, the
+          # splits.abi block is silently ignored.
+          # -----------------------------------------------------------------
+          mkdir -p app/src/main/jniLibs/arm64-v8a
+          mkdir -p app/src/main/jniLibs/armeabi-v7a
+          mkdir -p app/src/main/jniLibs/x86
+
+          # Minimal valid ELF headers (64-bit for arm64, 32-bit for the rest).
+          # AGP will not strip them because of keepDebugSymbols below.
+          printf '\x7fELF\x02\x01\x01\x00\x00\x00\x00\x00\x00\x00\x00\x00\x03\x00\xb7\x00\x01\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x40\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x40\x00\x38\x00\x01\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00' > app/src/main/jniLibs/arm64-v8a/libyaraniha_abi.so
+
+          printf '\x7fELF\x01\x01\x01\x00\x00\x00\x00\x00\x00\x00\x00\x00\x03\x00\x28\x00\x01\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x34\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x34\x00\x20\x00\x01\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00' > app/src/main/jniLibs/armeabi-v7a/libyaraniha_abi.so
+
+          printf '\x7fELF\x01\x01\x01\x00\x00\x00\x00\x00\x00\x00\x00\x00\x03\x00\x03\x00\x01\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x34\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x34\x00\x20\x00\x01\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00' > app/src/main/jniLibs/x86/libyaraniha_abi.so
+
           cp yaraniha.png app/src/main/res/drawable/yaraniha.png
 
           # =========================================================
@@ -434,7 +451,7 @@ jobs:
           EOF
 
           # =========================================================
-          # App build.gradle – uses env vars for signing
+          # App build.gradle
           # =========================================================
           cat > app/build.gradle <<'EOF'
           plugins {
@@ -455,6 +472,10 @@ jobs:
                   vectorDrawables.useSupportLibrary = true
               }
 
+              // ---------------------------------------------------
+              // ABI splits — will now actually produce 4 APKs because
+              // jniLibs/<abi>/libyaraniha_abi.so exists for each ABI.
+              // ---------------------------------------------------
               splits {
                   abi {
                       reset()
@@ -487,6 +508,16 @@ jobs:
                       minifyEnabled false
                       shrinkResources false
                       debuggable false
+                  }
+              }
+
+              // Prevent AGP from stripping our placeholder .so files.
+              packaging {
+                  jniLibs {
+                      keepDebugSymbols += "**/*.so"
+                  }
+                  resources {
+                      excludes += ['META-INF/*.version', 'META-INF/*.kotlin_module']
                   }
               }
 
@@ -572,7 +603,7 @@ jobs:
           EOF
           chmod +x gradlew
 
-          echo "Generated Android project."
+          echo "Generated Android project with dummy native libs."
 
       - name: Build Release APKs
         shell: bash
@@ -585,18 +616,25 @@ jobs:
         shell: bash
         run: |
           set -euo pipefail
+
           APK_DIR="app/build/outputs/apk/release"
-          if [ ! -d "$APK_DIR" ]; then
-            echo "ERROR: APK output directory not found."
-            exit 1
-          fi
+
           echo "=== APKs found ==="
-          ls -lh "$APK_DIR"
+          find "$APK_DIR" -maxdepth 1 -name "*.apk" -exec ls -lh {} \;
+
+          APK_COUNT=$(find "$APK_DIR" -maxdepth 1 -name "*.apk" | wc -l)
+          echo "Total APKs: $APK_COUNT"
+
+          if [ "$APK_COUNT" -lt 4 ]; then
+            echo "WARNING: Expected at least 4 APKs (3 ABI + universal), got $APK_COUNT"
+          fi
+
           echo
           echo "=== Signature verification ==="
           for apk in "$APK_DIR"/*.apk; do
-            echo "--- $apk ---"
-            "$ANDROID_HOME/build-tools/34.0.0/apksigner" verify --verbose "$apk" || true
+            echo "--- $(basename "$apk") ---"
+            "$ANDROID_HOME/build-tools/34.0.0/apksigner" verify --verbose "$apk" 2>&1 | \
+              grep -E "Verified using|Number of signers" || true
             echo
           done
 
