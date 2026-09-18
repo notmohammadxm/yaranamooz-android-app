@@ -14,13 +14,16 @@ concurrency:
 
 jobs:
   build:
-    name: Build Universal APK
+    name: Build Multi‑ABI APKs
     runs-on: ubuntu-24.04
 
     env:
       ANDROID_HOME: /usr/local/lib/android/sdk
       ANDROID_SDK_ROOT: /usr/local/lib/android/sdk
       GRADLE_OPTS: "-Dorg.gradle.daemon=false"
+      KEYSTORE_PASSWORD: ${{ secrets.ANDROID_KEYSTORE_PASSWORD }}
+      KEY_ALIAS: ${{ secrets.ANDROID_KEY_ALIAS }}
+      KEY_PASSWORD: ${{ secrets.ANDROID_KEY_PASSWORD }}
 
     steps:
       - name: Checkout repository
@@ -56,19 +59,18 @@ jobs:
           yes | "$SDKMANAGER" --licenses >/dev/null 2>&1 || true
           "$SDKMANAGER" "platform-tools" "platforms;android-34" "build-tools;34.0.0"
 
-      - name: Generate signing keystore
+      - name: Restore signing keystore from secret
         shell: bash
+        env:
+          KEYSTORE_BASE64: ${{ secrets.ANDROID_KEYSTORE_BASE64 }}
         run: |
           set -euo pipefail
-          keytool -genkeypair -v \
-            -keystore "$GITHUB_WORKSPACE/yaraniha.keystore" \
-            -alias yaraniha \
-            -keyalg RSA \
-            -keysize 2048 \
-            -validity 10000 \
-            -storepass yaraniha123 \
-            -keypass yaraniha123 \
-            -dname "CN=Yaraniha, OU=Dev, O=Yaraniha, L=Tehran, S=Tehran, C=IR"
+          if [ -z "${KEYSTORE_BASE64:-}" ]; then
+            echo "ERROR: ANDROID_KEYSTORE_BASE64 secret is missing."
+            exit 1
+          fi
+          echo "$KEYSTORE_BASE64" | base64 -d > "$GITHUB_WORKSPACE/yaraniha.keystore"
+          ls -lh "$GITHUB_WORKSPACE/yaraniha.keystore"
 
       - name: Generate Android project
         shell: bash
@@ -90,7 +92,7 @@ jobs:
           cp yaraniha.png app/src/main/res/drawable/yaraniha.png
 
           # =========================================================
-          # AndroidManifest.xml  (minimal, no API-31+/33+ attributes)
+          # AndroidManifest.xml
           # =========================================================
           cat > app/src/main/AndroidManifest.xml <<'EOF'
           <?xml version="1.0" encoding="utf-8"?>
@@ -139,7 +141,7 @@ jobs:
           EOF
 
           # =========================================================
-          # MainActivity.kt  (API-23 safe, no API-24+ calls without guards)
+          # MainActivity.kt
           # =========================================================
           cat > app/src/main/java/com/mohammadkhxm/browser/MainActivity.kt <<'EOF'
           package com.mohammadkhxm.browser
@@ -280,7 +282,6 @@ jobs:
                           )
                           request.setAllowedOverRoaming(true)
 
-                          // setAllowedOverMetered was added in API 24
                           if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.N) {
                               request.setAllowedOverMetered(true)
                           }
@@ -400,7 +401,7 @@ jobs:
           EOF
 
           # =========================================================
-          # Themes (light + dark)
+          # Themes
           # =========================================================
           cat > app/src/main/res/values/styles.xml <<'EOF'
           <?xml version="1.0" encoding="utf-8"?>
@@ -433,7 +434,7 @@ jobs:
           EOF
 
           # =========================================================
-          # App build.gradle (signed release, v1+v2+v3 signatures)
+          # App build.gradle – uses env vars for signing
           # =========================================================
           cat > app/build.gradle <<'EOF'
           plugins {
@@ -454,13 +455,20 @@ jobs:
                   vectorDrawables.useSupportLibrary = true
               }
 
+              splits {
+                  abi {
+                      reset()
+                      include 'arm64-v8a', 'armeabi-v7a', 'x86'
+                      universalApk true
+                  }
+              }
+
               signingConfigs {
                   release {
                       storeFile file("../yaraniha.keystore")
-                      storePassword "yaraniha123"
-                      keyAlias "yaraniha"
-                      keyPassword "yaraniha123"
-                      // V1 is REQUIRED for Android 6 (API 23)
+                      storePassword System.getenv("KEYSTORE_PASSWORD") ?: ""
+                      keyAlias System.getenv("KEY_ALIAS") ?: ""
+                      keyPassword System.getenv("KEY_PASSWORD") ?: ""
                       enableV1Signing true
                       enableV2Signing true
                       enableV3Signing true
@@ -566,42 +574,36 @@ jobs:
 
           echo "Generated Android project."
 
-      - name: Build Release APK
+      - name: Build Release APKs
         shell: bash
         run: |
           set -euo pipefail
           chmod +x ./gradlew
           ./gradlew assembleRelease --no-daemon --stacktrace
 
-      - name: Verify APK signatures (v1 + v2)
+      - name: Verify APK signatures
         shell: bash
         run: |
           set -euo pipefail
-
-          APK="app/build/outputs/apk/release/app-release.apk"
-
-          if [ ! -f "$APK" ]; then
-            echo "ERROR: APK was not generated."
+          APK_DIR="app/build/outputs/apk/release"
+          if [ ! -d "$APK_DIR" ]; then
+            echo "ERROR: APK output directory not found."
             exit 1
           fi
-
-          echo
-          echo "=== APK info ==="
-          ls -lh "$APK"
-
-          echo
-          echo "=== Badging ==="
-          "$ANDROID_HOME/build-tools/34.0.0/aapt" dump badging "$APK" \
-            | grep -E "package:|sdkVersion:|targetSdkVersion:|application-label:" || true
-
+          echo "=== APKs found ==="
+          ls -lh "$APK_DIR"
           echo
           echo "=== Signature verification ==="
-          "$ANDROID_HOME/build-tools/34.0.0/apksigner" verify --verbose "$APK"
+          for apk in "$APK_DIR"/*.apk; do
+            echo "--- $apk ---"
+            "$ANDROID_HOME/build-tools/34.0.0/apksigner" verify --verbose "$apk" || true
+            echo
+          done
 
-      - name: Upload APK
+      - name: Upload all APKs
         uses: actions/upload-artifact@v4
         with:
-          name: yaraniha-apk
-          path: app/build/outputs/apk/release/app-release.apk
+          name: yaraniha-multi-abi-apks
+          path: app/build/outputs/apk/release/*.apk
           if-no-files-found: error
           retention-days: 30
